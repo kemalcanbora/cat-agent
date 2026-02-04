@@ -1,0 +1,2 @@
+include cat_agent/utils/qwen.tiktoken
+recursive-include cat_agent/tools/resource *
