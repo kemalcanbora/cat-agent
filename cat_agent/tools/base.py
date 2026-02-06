@@ -1,17 +1,3 @@
-# Copyright 2023 The Qwen team, Alibaba Group. All rights reserved.
-# 
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-# 
-#    http://www.apache.org/licenses/LICENSE-2.0
-# 
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 import json
 import os
 from abc import ABC, abstractmethod
@@ -19,22 +5,30 @@ from typing import Dict, List, Optional, Union
 
 from cat_agent.llm.schema import ContentItem
 from cat_agent.settings import DEFAULT_WORKSPACE
-from cat_agent.utils.utils import has_chinese_chars, json_loads, logger, print_traceback, save_url_to_local_work_dir
+from cat_agent.utils.utils import (
+    has_chinese_chars,
+    json_loads,
+    logger,
+    print_traceback,
+    save_url_to_local_work_dir,
+)
 
 TOOL_REGISTRY = {}
 
 
 class ToolServiceError(Exception):
 
-    def __init__(self,
-                 exception: Optional[Exception] = None,
-                 code: Optional[str] = None,
-                 message: Optional[str] = None,
-                 extra: Optional[dict] = None):
+    def __init__(
+        self,
+        exception: Optional[Exception] = None,
+        code: Optional[str] = None,
+        message: Optional[str] = None,
+        extra: Optional[dict] = None,
+    ):
         if exception is not None:
             super().__init__(exception)
         else:
-            super().__init__(f'\nError code: {code}. Error message: {message}')
+            super().__init__(f"\nError code: {code}. Error message: {message}")
         self.exception = exception
         self.code = code
         self.message = message
@@ -42,13 +36,12 @@ class ToolServiceError(Exception):
 
 
 def register_tool(name, allow_overwrite=False):
-
     def decorator(cls):
         if name in TOOL_REGISTRY:
             if allow_overwrite:
-                logger.warning(f'Tool `{name}` already exists! Overwriting with class {cls}.')
+                logger.warning(f"Tool `{name}` already exists! Overwriting with class {cls}.")
             else:
-                raise ValueError(f'Tool `{name}` already exists! Please ensure that the tool name is unique.')
+                raise ValueError(f"Tool `{name}` already exists! Please ensure that the tool name is unique.")
         if cls.name and (cls.name != name):
             raise ValueError(f'{cls.__name__}.name="{cls.name}" conflicts with @register_tool(name="{name}").')
         cls.name = name
@@ -83,22 +76,23 @@ def is_tool_schema(obj: dict) -> bool:
     }
     """
     import jsonschema
-    try:
-        assert set(obj.keys()) == {'name', 'description', 'parameters'}
-        assert isinstance(obj['name'], str)
-        assert obj['name'].strip()
-        assert isinstance(obj['description'], str)
-        assert isinstance(obj['parameters'], dict)
 
-        assert set(obj['parameters'].keys()) == {'type', 'properties', 'required'}
-        assert obj['parameters']['type'] == 'object'
-        assert isinstance(obj['parameters']['properties'], dict)
-        assert isinstance(obj['parameters']['required'], list)
-        assert set(obj['parameters']['required']).issubset(set(obj['parameters']['properties'].keys()))
+    try:
+        assert set(obj.keys()) == {"name", "description", "parameters"}
+        assert isinstance(obj["name"], str)
+        assert obj["name"].strip()
+        assert isinstance(obj["description"], str)
+        assert isinstance(obj["parameters"], dict)
+
+        assert set(obj["parameters"].keys()) == {"type", "properties", "required"}
+        assert obj["parameters"]["type"] == "object"
+        assert isinstance(obj["parameters"]["properties"], dict)
+        assert isinstance(obj["parameters"]["required"], list)
+        assert set(obj["parameters"]["required"]).issubset(set(obj["parameters"]["properties"].keys()))
     except AssertionError:
         return False
     try:
-        jsonschema.validate(instance={}, schema=obj['parameters'])
+        jsonschema.validate(instance={}, schema=obj["parameters"])
     except jsonschema.exceptions.SchemaError:
         return False
     except jsonschema.exceptions.ValidationError:
@@ -107,20 +101,28 @@ def is_tool_schema(obj: dict) -> bool:
 
 
 class BaseTool(ABC):
-    name: str = ''
-    description: str = ''
-    parameters: Union[List[dict], dict] = []
+    name: str = ""
+    description: str = ""
+    parameters: Union[List[dict], dict, None] = None  # avoid mutable default
 
     def __init__(self, cfg: Optional[dict] = None):
         self.cfg = cfg or {}
         if not self.name:
             raise ValueError(
-                f'You must set {self.__class__.__name__}.name, either by @register_tool(name=...) or explicitly setting {self.__class__.__name__}.name'
+                f"You must set {self.__class__.__name__}.name, either by @register_tool(name=...) or explicitly setting {self.__class__.__name__}.name"
             )
+
+        # Normalize parameters per instance (no shared mutable defaults)
+        if self.parameters is None:
+            self.parameters = []
+        elif isinstance(self.parameters, tuple):
+            self.parameters = list(self.parameters)
+
         if isinstance(self.parameters, dict):
-            if not is_tool_schema({'name': self.name, 'description': self.description, 'parameters': self.parameters}):
+            if not is_tool_schema({"name": self.name, "description": self.description, "parameters": self.parameters}):
                 raise ValueError(
-                    'The parameters, when provided as a dict, must confirm to a valid openai-compatible JSON schema.')
+                    "The parameters, when provided as a dict, must confirm to a valid openai-compatible JSON schema."
+                )
 
     @abstractmethod
     def call(self, params: Union[str, dict], **kwargs) -> Union[str, list, dict, List[ContentItem]]:
@@ -146,16 +148,17 @@ class BaseTool(ABC):
                 else:
                     params_json: dict = json_loads(params)
             except json.decoder.JSONDecodeError:
-                raise ValueError('Parameters must be formatted as a valid JSON!')
+                raise ValueError("Parameters must be formatted as a valid JSON!")
         else:
             params_json: dict = params
         if isinstance(self.parameters, list):
             for param in self.parameters:
-                if 'required' in param and param['required']:
-                    if param['name'] not in params_json:
-                        raise ValueError('Parameters %s is required!' % param['name'])
+                if "required" in param and param["required"]:
+                    if param["name"] not in params_json:
+                        raise ValueError("Parameters %s is required!" % param["name"])
         elif isinstance(self.parameters, dict):
             import jsonschema
+
             jsonschema.validate(instance=params_json, schema=self.parameters)
         else:
             raise ValueError
@@ -165,24 +168,24 @@ class BaseTool(ABC):
     def function(self) -> dict:  # Bad naming. It should be `function_info`.
         return {
             # 'name_for_human': self.name_for_human,
-            'name': self.name,
-            'description': self.description,
-            'parameters': self.parameters,
+            "name": self.name,
+            "description": self.description,
+            "parameters": self.parameters,
             # 'args_format': self.args_format
         }
 
     @property
     def name_for_human(self) -> str:
-        return self.cfg.get('name_for_human', self.name)
+        return self.cfg.get("name_for_human", self.name)
 
     @property
     def args_format(self) -> str:
-        fmt = self.cfg.get('args_format')
+        fmt = self.cfg.get("args_format")
         if fmt is None:
             if has_chinese_chars([self.name_for_human, self.name, self.description, self.parameters]):
-                fmt = 'The input for this tool should be a JSON object.'
+                fmt = "The input for this tool should be a JSON object."
             else:
-                fmt = 'Format the arguments as a JSON object.'
+                fmt = "Format the arguments as a JSON object."
         return fmt
 
     @property
@@ -191,19 +194,22 @@ class BaseTool(ABC):
 
 
 class BaseToolWithFileAccess(BaseTool, ABC):
-
     def __init__(self, cfg: Optional[Dict] = None):
         super().__init__(cfg)
         assert self.name
-        default_work_dir = os.path.join(DEFAULT_WORKSPACE, 'tools', self.name)
-        self.work_dir: str = self.cfg.get('work_dir', default_work_dir)
+        default_work_dir = os.path.join(DEFAULT_WORKSPACE, "tools", self.name)
+        self.work_dir: str = self.cfg.get("work_dir", default_work_dir)
 
     @property
     def file_access(self) -> bool:
         return True
 
+    @abstractmethod
     def call(self, params: Union[str, dict], files: List[str] = None, **kwargs) -> str:
-        # Copy remote files to the working directory:
+        """
+        Subclasses must implement this method.
+        Implementations may optionally use `files`, which—if provided—will have been copied into `self.work_dir`.
+        """
         if files:
             os.makedirs(self.work_dir, exist_ok=True)
             for file in files:
@@ -211,6 +217,5 @@ class BaseToolWithFileAccess(BaseTool, ABC):
                     save_url_to_local_work_dir(file, self.work_dir)
                 except Exception:
                     print_traceback()
-
-        # Then do something with the files:
-        # ...
+        # Subclasses should return a string result.
+        raise NotImplementedError
