@@ -1,14 +1,14 @@
- name: Publish to PyPI
+name: Publish to PyPI
 
- on:
-   push:
-     tags:
-       - "v*"
+on:
+  push:
+    tags:
+      - "v*"
 
- jobs:
-   build-and-publish:
-     name: Build and publish to PyPI
-     runs-on: ubuntu-latest
+jobs:
+  build-and-publish:
+    name: Build and publish to PyPI
+    runs-on: ubuntu-latest
 
     steps:
       - name: Check out code
@@ -21,32 +21,32 @@
 
       - name: Verify tag matches package version
         run: |
-           python - << 'PY'
-           import os
-           import pathlib
-           import re
-           import sys
+          python - << 'PY'
+          import os
+          import pathlib
+          import re
+          import sys
 
-           tag = os.environ.get("GITHUB_REF_NAME", "")
-           if tag.startswith("refs/tags/"):
-               tag = tag.split("/", 2)[-1]
-           if tag.startswith("v"):
-               tag = tag[1:]
+          tag = os.environ.get("GITHUB_REF_NAME", "")
+          if tag.startswith("refs/tags/"):
+              tag = tag.split("/", 2)[-1]
+          if tag.startswith("v"):
+              tag = tag[1:]
 
-           init_path = pathlib.Path("cat_agent/__init__.py")
-           text = init_path.read_text(encoding="utf-8")
-           m = re.search(r"__version__\s*=\s*['\"]([^'\"]+)['\"]", text)
-           if not m:
-               print("Could not find __version__ in cat_agent/__init__.py", file=sys.stderr)
-               sys.exit(1)
+          init_path = pathlib.Path("cat_agent/__init__.py")
+          text = init_path.read_text(encoding="utf-8")
+          m = re.search(r"__version__\s*=\s*['\"]([^'\"]+)['\"]", text)
+          if not m:
+              print("Could not find __version__ in cat_agent/__init__.py", file=sys.stderr)
+              sys.exit(1)
 
-           version = m.group(1)
-           if version != tag:
-               print(f"Tag version ({tag}) does not match cat_agent.__version__ ({version})", file=sys.stderr)
-               sys.exit(1)
+          version = m.group(1)
+          if version != tag:
+              print(f"Tag version ({tag}) does not match cat_agent.__version__ ({version})", file=sys.stderr)
+              sys.exit(1)
 
-           print(f"Tag version {tag} matches cat_agent.__version__")
-           PY
+          print(f"Tag version {tag} matches cat_agent.__version__")
+          PY
 
       - name: Install build backend
         run: |
@@ -55,9 +55,3 @@
 
       - name: Build distributions
         run: python -m build
-
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
-
