@@ -24,16 +24,16 @@ from cat_agent.utils.tokenization_qwen import count_tokens, tokenizer
 
 
 class GenKeywordWithKnowledge(GenKeyword):
-    PROMPT_TEMPLATE_ZH = """根据问题提取中文或英文关键词，不超过10个，可以适量补充不在问题中但相关的关键词。
-请依据给定参考资料的语言风格来生成（目的是方便利用关键词匹配参考资料）。
-关键词尽量切分为动词/名词/形容词等类型的短语或单次，不要长词组。
+    PROMPT_TEMPLATE_ZH = """Extract Chinese or English keywords based on the question, no more than 10. You can appropriately supplement relevant keywords that are not in the question.
+Please generate keywords based on the language style of the given reference material (the purpose is to facilitate matching keywords with the reference material).
+Try to split keywords into phrases or single words of types such as verb/noun/adjective, and avoid long phrases.
 
-Begin！
-<Refs>本场景词汇列表：
+Begin!
+<Refs> Vocabulary list for this scenario:
 {ref_doc}
 ...
 Question: {user_request}
-Thought: 我应该依据参考资料中的词汇风格来提取问题的关键词，关键词以JSON的格式给出：{{"keywords_zh": ["关键词1", "关键词2"], "keywords_en": ["keyword 1", "keyword 2"]}}
+Thought: I should extract keywords from the question based on the vocabulary style in the reference material. Keywords are provided in JSON format: {{"keywords_zh": ["keyword 1", "keyword 2"], "keywords_en": ["keyword 1", "keyword 2"]}}
 Keywords:
 """
 
@@ -46,7 +46,7 @@ Begin！
 {ref_doc}
 ...
 Question: {user_request}
-Thought: I should use the vocabulary in Resources to extract the key words of the question. Keywords are provided in JSON format: {{"keywords_zh": ["关键词1", "关键词2"], "keywords_en": ["keyword 1", "keyword 2"]}}.
+Thought: I should use the vocabulary in Resources to extract the key words of the question. Keywords are provided in JSON format: {{"keywords_zh": ["Keyword 1", "Keyword 2"], "keywords_en": ["keyword 1", "keyword 2"]}}.
 Keywords:
 """
 

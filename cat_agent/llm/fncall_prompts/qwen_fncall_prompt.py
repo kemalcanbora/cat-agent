@@ -236,9 +236,9 @@ FN_RESULT = '✿RESULT✿'
 FN_EXIT = '✿RETURN✿'
 FN_STOP_WORDS = [FN_RESULT, FN_EXIT]
 
-FN_CALL_TEMPLATE_INFO_ZH = """# 工具
+FN_CALL_TEMPLATE_INFO_ZH = """# Tools
 
-## 你拥有如下工具：
+## You have access to the following tools:
 
 {tool_descs}"""
 
@@ -248,12 +248,12 @@ FN_CALL_TEMPLATE_INFO_EN = """# Tools
 
 {tool_descs}"""
 
-FN_CALL_TEMPLATE_FMT_ZH = """## 你可以在回复中插入零次、一次或多次以下命令以调用工具：
+FN_CALL_TEMPLATE_FMT_ZH = """## You can insert the following command one or more times in your reply to call tools:
 
-%s: 工具名称，必须是[{tool_names}]之一。
-%s: 工具输入
-%s: 工具结果
-%s: 根据工具结果进行回复，需将图片用![](url)渲染出来""" % (
+%s: Tool name, must be one of [{tool_names}].
+%s: Tool input
+%s: Tool result
+%s: Reply based on the tool result, images should be rendered using ![](url)""" % (
     FN_NAME,
     FN_ARGS,
     FN_RESULT,
@@ -272,20 +272,20 @@ FN_CALL_TEMPLATE_FMT_EN = """## When you need to call a tool, please insert the 
     FN_EXIT,
 )
 
-FN_CALL_TEMPLATE_FMT_PARA_ZH = """## 你可以在回复中插入以下命令以并行调用N个工具：
+FN_CALL_TEMPLATE_FMT_PARA_ZH = """## You can insert the following commands in your reply to call N tools in parallel:
 
-%s: 工具1的名称，必须是[{tool_names}]之一
-%s: 工具1的输入
-%s: 工具2的名称
-%s: 工具2的输入
+%s: The name of tool 1, must be one of [{tool_names}]
+%s: The input of tool 1
+%s: The name of tool 2
+%s: The input of tool 2
 ...
-%s: 工具N的名称
-%s: 工具N的输入
-%s: 工具1的结果
-%s: 工具2的结果
+%s: The name of tool N
+%s: The input of tool N
+%s: Tool 1 result
+%s: Tool 2 result
 ...
-%s: 工具N的结果
-%s: 根据工具结果进行回复，需将图片用![](url)渲染出来""" % (
+%s: Tool N result
+%s: Reply based on the tool result, images should be rendered using ![](url)""" % (
     FN_NAME,
     FN_ARGS,
     FN_NAME,
@@ -337,7 +337,7 @@ def get_function_description(function: Dict, lang: Literal['en', 'zh']) -> str:
     Text description of function
     """
     tool_desc_template = {
-        'zh': '### {name_for_human}\n\n{name_for_model}: {description_for_model} 输入参数：{parameters} {args_format}',
+        'zh': '### {name_for_human}\n\n{name_for_model}: {description_for_model} Parameters: {parameters} {args_format}',
         'en': '### {name_for_human}\n\n{name_for_model}: {description_for_model} Parameters: {parameters} {args_format}'
     }
     tool_desc = tool_desc_template[lang]
@@ -348,12 +348,12 @@ def get_function_description(function: Dict, lang: Literal['en', 'zh']) -> str:
 
     if name_for_model == 'code_interpreter':
         args_format = {
-            'zh': '此工具的输入应为Markdown代码块。',
+            'zh': 'The input for this tool should be a Markdown code block.',
             'en': 'Enclose the code within triple backticks (`) at the beginning and end of the code.',
         }
     else:
         args_format = {
-            'zh': '此工具的输入应为JSON对象。',
+            'zh': 'The input for this tool should be a JSON object.',
             'en': 'Format the arguments as a JSON object.',
         }
     args_format = function.get('args_format', args_format[lang])

@@ -371,29 +371,29 @@ def format_as_multimodal_message(
             for f, k in [(get_basename_from_url(f), k) for f, k in files]:
                 if k == 'image':
                     if has_zh:
-                        upload.append(f'![图片]({f})')
+                        upload.append(f'![image]({f})')
                     else:
                         upload.append(f'![image]({f})')
                 elif k == 'video':
                     if has_zh:
-                        upload.append(f'![视频]({f})')
+                        upload.append(f'![video]({f})')
                     else:
                         upload.append(f'![video]({f})')
                 elif k == 'audio':
                     if has_zh:
-                        upload.append(f'![音频]({f})')
+                        upload.append(f'![audio]({f})')
                     else:
                         upload.append(f'![audio]({f})')
                 else:
                     if has_zh:
-                        upload.append(f'[文件]({f})')
+                        upload.append(f'[file]({f})')
                     else:
                         upload.append(f'[file]({f})')
             if upload:
                 upload = ' '.join(upload)
                 if msg.role in (SYSTEM, USER):
                     if has_zh:
-                        upload = f'（上传了 {upload}）'
+                        upload = f'(Uploaded {upload})'
                     else:
                         upload = f'(Uploaded {upload}) '
                 elif msg.role in (ASSISTANT, FUNCTION):

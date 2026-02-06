@@ -81,7 +81,7 @@ class VirtualMemoryAgent(Assistant):
         if lang == 'en':
             file_prefix = '[file]({f_name})'
         else:
-            file_prefix = '[文件]({f_name})'
+            file_prefix = '[file]({f_name})'
         new_messages = []
         for msg in messages:
             if msg.role == USER and isinstance(msg.content, list):

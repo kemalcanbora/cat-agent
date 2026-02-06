@@ -23,18 +23,18 @@ from cat_agent.utils.utils import merge_generate_cfgs
 
 
 class GenKeyword(Agent):
-    PROMPT_TEMPLATE_ZH = """请提取问题中的关键词，需要中英文均有，可以适量补充不在问题中但相关的关键词。关键词尽量切分为动词、名词、或形容词等单独的词，不要长词组（目的是更好的匹配检索到语义相关但表述不同的相关资料）。关键词以JSON的格式给出，比如{{"keywords_zh": ["关键词1", "关键词2"], "keywords_en": ["keyword 1", "keyword 2"]}}
+    PROMPT_TEMPLATE_ZH = """Please extract keywords from the question, both in Chinese and English, and supplement them appropriately with relevant keywords that are not in the question. Try to divide keywords into verbs, nouns, or adjectives as individual words, and avoid long phrases (the aim is to better match and retrieve semantically related but differently phrased relevant information). Keywords are provided in JSON format, such as {{"keywords_zh": ["keyword 1", "keyword 2"], "keywords_en": ["keyword 1", "keyword 2"]}}
 
-Question: 这篇文章的作者是谁？
-Keywords: {{"keywords_zh": ["作者"], "keywords_en": ["author"]}}
+Question: Who is the author of this article?
+Keywords: {{"keywords_zh": ["Author"], "keywords_en": ["author"]}}
 Observation: ...
 
-Question: 解释下图一
-Keywords: {{"keywords_zh": ["图一", "图 1"], "keywords_en": ["Figure 1"]}}
+Question: Explain Figure 1
+Keywords: {{"keywords_zh": ["Figure 1", "Fig 1"], "keywords_en": ["Figure 1"]}}
 Observation: ...
 
-Question: 核心公式
-Keywords: {{"keywords_zh": ["核心公式", "公式"], "keywords_en": ["core formula", "formula", "equation"]}}
+Question: Core formula
+Keywords: {{"keywords_zh": ["Core formula", "formula"], "keywords_en": ["core formula", "formula", "equation"]}}
 Observation: ...
 
 Question: {user_request}
@@ -43,18 +43,18 @@ Keywords:
 
     PROMPT_TEMPLATE_EN = """Please extract keywords from the question, both in Chinese and English, and supplement them appropriately with relevant keywords that are not in the question.
 Try to divide keywords into verb, noun, or adjective types and avoid long phrases (The aim is to better match and retrieve semantically related but differently phrased relevant information).
-Keywords are provided in JSON format, such as {{"keywords_zh": ["关键词1", "关键词2"], "keywords_en": ["keyword 1", "keyword 2"]}}
+Keywords are provided in JSON format, such as {{"keywords_zh": ["Keyword 1", "Keyword 2"], "keywords_en": ["keyword 1", "keyword 2"]}}
 
 Question: Who are the authors of this article?
-Keywords: {{"keywords_zh": ["作者"], "keywords_en": ["author"]}}
+Keywords: {{"keywords_zh": ["Author"], "keywords_en": ["author"]}}
 Observation: ...
 
 Question: Explain Figure 1
-Keywords: {{"keywords_zh": ["图一", "图 1"], "keywords_en": ["Figure 1"]}}
+Keywords: {{"keywords_zh": ["Figure 1", "Fig 1"], "keywords_en": ["Figure 1"]}}
 Observation: ...
 
 Question: core formula
-Keywords: {{"keywords_zh": ["核心公式", "公式"], "keywords_en": ["core formula", "formula", "equation"]}}
+Keywords: {{"keywords_zh": ["Core formula", "formula"], "keywords_en": ["core formula", "formula", "equation"]}}
 Observation: ...
 
 Question: {user_request}

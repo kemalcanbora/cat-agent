@@ -24,7 +24,7 @@ from cat_agent.log import logger
 from cat_agent.tools import BaseTool
 from cat_agent.utils.utils import get_basename_from_url, print_traceback
 
-KNOWLEDGE_TEMPLATE_ZH = """# 知识库
+KNOWLEDGE_TEMPLATE_ZH = """# Knowledge Base
 
 {knowledge}"""
 
@@ -34,7 +34,7 @@ KNOWLEDGE_TEMPLATE_EN = """# Knowledge Base
 
 KNOWLEDGE_TEMPLATE = {'zh': KNOWLEDGE_TEMPLATE_ZH, 'en': KNOWLEDGE_TEMPLATE_EN}
 
-KNOWLEDGE_SNIPPET_ZH = """## 来自 {source} 的内容：
+KNOWLEDGE_SNIPPET_ZH = """## Content from {source}:
 
 ```
 {content}
@@ -57,7 +57,7 @@ def format_knowledge_to_source_and_content(result: Union[str, List[dict]]) -> Li
             docs = json.loads(result)
         except Exception:
             print_traceback()
-            knowledge.append({'source': '上传的文档', 'content': result})
+            knowledge.append({'source': 'Uploaded document', 'content': result})
             return knowledge
     else:
         docs = result
@@ -68,13 +68,13 @@ def format_knowledge_to_source_and_content(result: Union[str, List[dict]]) -> Li
             url, snippets = doc['url'], doc['text']
             assert isinstance(snippets, list)
             _tmp_knowledge.append({
-                'source': f'[文件]({get_basename_from_url(url)})',
+                'source': f'[file]({get_basename_from_url(url)})',
                 'content': '\n\n...\n\n'.join(snippets)
             })
         knowledge.extend(_tmp_knowledge)
     except Exception:
         print_traceback()
-        knowledge.append({'source': '上传的文档', 'content': result})
+        knowledge.append({'source': 'Uploaded document', 'content': result})
     return knowledge
 
 
@@ -161,9 +161,9 @@ def get_current_date_str(
         date_str = 'Current date: ' + cur_time.strftime('%A, %B %d, %Y')
     elif lang == 'zh':
         cur_time = cur_time.timetuple()
-        date_str = f'当前时间：{cur_time.tm_year}年{cur_time.tm_mon}月{cur_time.tm_mday}日，星期'
-        date_str += ['一', '二', '三', '四', '五', '六', '日'][cur_time.tm_wday]
-        date_str += '。'
+        date_str = f'Current time: {cur_time.tm_year}-{cur_time.tm_mon:02d}-{cur_time.tm_mday:02d}, '
+        date_str += ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][cur_time.tm_wday]
+        date_str += '.'
     else:
         raise NotImplementedError
     return date_str

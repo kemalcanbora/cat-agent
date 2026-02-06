@@ -23,14 +23,14 @@ from cat_agent.utils.utils import has_chinese_chars
 
 
 class GroupChatAutoRouter(Agent):
-    PROMPT_TEMPLATE_ZH = '''你扮演角色扮演游戏的上帝，你的任务是选择合适的发言角色。有如下角色：
+    PROMPT_TEMPLATE_ZH = '''You are the game master of a role-play game, your task is to choose the appropriate role to speak. The roles are as follows:
 {agent_descs}
 
-角色间的对话历史格式如下，越新的对话越重要：
-角色名: 说话内容
+The format of the dialogue history between roles is as follows, with newer dialogues being more important:
+Role Name: Speech Content
 
-请阅读对话历史，并选择下一个合适的发言角色，从 [{agent_names}] 里选，当真实用户最近表明了停止聊天时，或话题应该终止时，请返回“[STOP]”，用户很懒，非必要不要选真实用户。
-仅返回角色名或“[STOP]”，不要返回其余内容。'''
+Please read the dialogue history and choose the next suitable role to speak from [{agent_names}]. When the real user has recently indicated they want to stop chatting, or when the topic should be terminated, please return '[STOP]'. Users are lazy, do not choose the real user unless necessary.
+Only return the role name or '[STOP]', do not return any other content.'''
 
     PROMPT_TEMPLATE_EN = '''You are in a role play game. The following roles are available:
 {agent_descs}
@@ -89,7 +89,7 @@ Only return the role name from [{agent_names}] or '[STOP]'. Do not reply any oth
                 dialogue.append(f'{display_name}: {content}')
 
         if not dialogue:
-            dialogue.append('对话刚开始，请任意选择一个发言人，别选真实用户')
+            dialogue.append('The conversation has just started, please choose any speaker, do not choose the real user')
         assert messages[0].role == SYSTEM
         new_messages = [copy.deepcopy(messages[0]), Message('user', '\n'.join(dialogue))]
         return self._call_llm(messages=new_messages)

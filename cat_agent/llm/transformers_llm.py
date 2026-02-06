@@ -147,11 +147,16 @@ class Transformers(BaseFnCallModel):
             streamer=streamer,
             max_new_tokens=generate_cfg.get('max_new_tokens', 2048)
         ))
-        
+
+        # Handle special keys that are not accepted by `generate`
         if 'seed' in generate_cfg:
             from transformers import set_seed
             set_seed(generate_cfg['seed'])
             del generate_cfg['seed']
+        # `stop` is used by some backends but not by transformers' generate()
+        if 'stop' in generate_cfg:
+            logger.debug(f"Removing unsupported `stop` from generate_cfg for transformers backend: {generate_cfg['stop']}")
+            del generate_cfg['stop']
 
         def generate_and_signal_complete():
             self.hf_model.generate(**generate_cfg)
@@ -178,11 +183,15 @@ class Transformers(BaseFnCallModel):
         generate_cfg.update(dict(
             max_new_tokens=generate_cfg.get('max_new_tokens', 2048)
         ))
-        
+
+        # Handle special keys that are not accepted by `generate`
         if 'seed' in generate_cfg:
             from transformers import set_seed
             set_seed(generate_cfg['seed'])
             del generate_cfg['seed']
+        if 'stop' in generate_cfg:
+            logger.debug(f"Removing unsupported `stop` from generate_cfg for transformers backend: {generate_cfg['stop']}")
+            del generate_cfg['stop']
 
         response = self.hf_model.generate(**generate_cfg)
         response = response[:, inputs['input_ids'].size(-1):]

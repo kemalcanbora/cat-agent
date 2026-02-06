@@ -37,12 +37,12 @@ class RefMaterialOutput(BaseModel):
 
 
 class BaseSearch(BaseTool):
-    description = '从给定文档中检索和问题相关的部分'
+    description = 'Retrieve parts relevant to the question from the given document.'
     parameters = {
         'type': 'object',
         'properties': {
             'query': {
-                'description': '问题，需要从文档中检索和这个问题有关的内容',
+                'description': 'The question, for which relevant content needs to be retrieved from the document.',
                 'type': 'string',
             }
         },
@@ -67,17 +67,19 @@ class BaseSearch(BaseTool):
         params = self._verify_json_format_args(params)
         # Compatible with the parameter passing of the qwen-agent version <= 0.0.3
         max_ref_token = kwargs.get('max_ref_token', self.max_ref_token)
+        # Optional override: force semantic search even if all_tokens <= max_ref_token
+        force_search = bool(kwargs.get('force_search', False))
 
         # The query is a string that may contain only the original question,
         # or it may be a json string containing the generated keywords and the original question
         query = params['query']
         if not docs:
             return []
-        if not query:
+        if not query and not force_search:
             return self._get_the_front_part(docs, max_ref_token)
         new_docs, all_tokens = self.format_docs(docs)
         logger.info(f'all tokens: {all_tokens}')
-        if all_tokens <= max_ref_token:
+        if all_tokens <= max_ref_token and not force_search:
             # Todo: Whether to use full window
             logger.info('use full ref')
             return [

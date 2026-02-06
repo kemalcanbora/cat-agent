@@ -106,7 +106,7 @@ class CodeInterpreter(BaseToolWithFileAccess):
         fmt = self.cfg.get('args_format')
         if fmt is None:
             if has_chinese_chars([self.name_for_human, self.name, self.description, self.parameters]):
-                fmt = '此工具的输入应为Markdown代码块。'
+                fmt = 'The input for this tool should be a Markdown code block.'
             else:
                 fmt = 'Enclose the code within triple backticks (`) at the beginning and end of the code.'
         return fmt

@@ -18,14 +18,14 @@ from typing import Iterator, List
 from cat_agent import Agent
 from cat_agent.llm.schema import CONTENT, Message
 
-PROMPT_TEMPLATE_ZH = """你是一个写作助手，请依据参考资料，根据给定的前置文本续写合适的内容。
-#参考资料：
+PROMPT_TEMPLATE_ZH = """You are a writing assistant. Please continue writing appropriate content based on the reference materials and the given preceding text.
+# References:
 {ref_doc}
 
-#前置文本：
+# Preceding Text:
 {user_request}
 
-保证续写内容和前置文本保持连贯，请开始续写："""
+Ensure that the continued content remains consistent with the preceding text. Please start continuing:"""
 
 PROMPT_TEMPLATE_EN = """You are a writing assistant, please follow the reference materials and continue to write appropriate content based on the given previous text.
 

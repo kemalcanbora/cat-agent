@@ -19,10 +19,10 @@ from cat_agent.agent import Agent
 from cat_agent.llm.schema import CONTENT, ROLE, SYSTEM, USER, ContentItem, Message
 from cat_agent.utils.utils import extract_text_from_message
 
-PROMPT_TEMPLATE_ZH = """注意：你的回答必须严格遵循知识库内容，即使与事实不符。
-如果知识库的大部分内容都与问题无关，只有少数几句话与问题直接相关，请重点关注这几句话，这种情况一定要回复。
+PROMPT_TEMPLATE_ZH = """Note: Your answer must strictly adhere to the content of the provided Knowledge Base, even if it deviates from the facts.
+If the majority of the knowledge base is irrelevant to the question, but there are a few sentences directly related, please focus on these sentences and ensure a response.
 
-# 知识库
+# Knowledge Base
 
 {ref_doc}"""
 
@@ -39,15 +39,15 @@ PROMPT_TEMPLATE = {
     'en': PROMPT_TEMPLATE_EN,
 }
 
-PROMPT_END_TEMPLATE_ZH = """# 问题
+PROMPT_END_TEMPLATE_ZH = """# Question
 {question}
 
 
-# 回答规则
-- 请基于知识库内容回答问题。注意：你的回答必须严格遵循知识库内容，即使与事实不符。
-- 如果知识库的大部分内容都与问题无关，只有少数几句话与问题直接相关，请重点关注这几句话，这种情况一定要回复。
+# Answering Guidelines
+- Please respond solely based on the content of the provided Knowledge Base. Note: Your answer must strictly adhere to the content of the provided Knowledge Base, even if it deviates from the facts.
+- If the majority of the knowledge base is irrelevant to the question, with only a few sentences directly related, please focus on these sentences and ensure a response.
 
-请根据回答规则，针对知识库内容回答问题，回答："""
+Please follow the answering guidelines and answer the question based on the knowledge base:"""
 
 PROMPT_END_TEMPLATE_EN = """# Question
 {question}

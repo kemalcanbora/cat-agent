@@ -21,10 +21,10 @@ from cat_agent.llm.schema import CONTENT, DEFAULT_SYSTEM_MESSAGE, ROLE, SYSTEM, 
 from cat_agent.tools import BaseTool
 
 DEFAULT_NAME = 'Basic DocQA'
-DEFAULT_DESC = '可以根据问题，检索出知识库中的某个相关细节来回答。适用于需要定位到具体位置的问题，例如“介绍表1”等类型的问题'
+DEFAULT_DESC = 'Can answer questions by retrieving relevant details from the knowledge base. Suitable for questions that need specific positioning, such as "introduce Table 1".'
 
-PROMPT_TEMPLATE_ZH = """请充分理解以下参考资料内容，组织出满足用户提问的条理清晰的回复。
-#参考资料：
+PROMPT_TEMPLATE_ZH = """Please fully understand the content of the following reference materials and organize a clear response that meets the user's questions.
+# References:
 {ref_doc}"""
 
 PROMPT_TEMPLATE_EN = """Please fully understand the content of the following reference materials and organize a clear response that meets the user's questions.

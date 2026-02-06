@@ -180,7 +180,7 @@ class BaseTool(ABC):
         fmt = self.cfg.get('args_format')
         if fmt is None:
             if has_chinese_chars([self.name_for_human, self.name, self.description, self.parameters]):
-                fmt = '此工具的输入应为JSON对象。'
+                fmt = 'The input for this tool should be a JSON object.'
             else:
                 fmt = 'Format the arguments as a JSON object.'
         return fmt

@@ -93,7 +93,7 @@ class BaseFnCallModel(BaseChatModel, ABC):
                     tool_name = msg.function_call.name
                     tool_args = msg.function_call.arguments
                     if lang == 'zh':
-                        tool_text = f'\n\n工具"{tool_name}"被调用时使用了以下参数：\n{tool_args}'
+                        tool_text = f'\n\nThe tool "{tool_name}" was called with these arguments: \n{tool_args}'
                     else:
                         tool_text = f'\n\nThe tool "{tool_name}" was called with these arguments: \n{tool_args}'
                 else:
@@ -106,7 +106,7 @@ class BaseFnCallModel(BaseChatModel, ABC):
                     else:
                         tool_result = 'No result.'
                     if lang == 'zh':
-                        tool_text = f'\n\n该工具返回了以下结果：\n{tool_result}'
+                        tool_text = f'\n\nThe tool has returned the following result: \n{tool_result}'
                     else:
                         tool_text = f'\n\nThe tool has returned the following result: \n{tool_result}'
                 new_messages[-1].content.append(ContentItem(text=tool_text))

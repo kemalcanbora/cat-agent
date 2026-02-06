@@ -23,18 +23,18 @@ from cat_agent.llm.schema import DEFAULT_SYSTEM_MESSAGE, SYSTEM, USER, ContentIt
 from cat_agent.tools import BaseTool
 
 MEMORY_PROMPT = """
-在对话过程中，你可以随时使用storage工具来存储你认为需要记住的信息，同时也随时可以读取曾经可能存储了的历史信息。
-这将有助于你在和用户的长对话中，记住某些重要的信息，比如用户的喜好、特殊信息、或重大事件等。
-关于数据存取，有以下两点建议：
-1. 存一条数据的key尽量简洁易懂，可以用所记录内容的关键词；
-2. 如果忘记存过什么数据，可以使用scan查看记录过哪些数据；
+During the conversation, you can use the storage tool at any time to store information you think needs to be remembered, and you can also read historical information that may have been stored at any time.
+This will help you remember certain important information during long conversations with users, such as user preferences, special information, or major events.
+Regarding data storage and retrieval, here are two suggestions:
+1. Keep the key for storing data concise and easy to understand, and you can use keywords of the recorded content;
+2. If you forget what data has been stored, you can use scan to view what data has been recorded;
 
-此处展示当前你存入的所有信息，因此你可以省去专门读取数据的操作：
+Here are all the information you have stored, so you can skip the operation of reading data specifically:
 <info>
 {storage_info}
 </info>
 
-你的记忆很短暂，请频繁的调用工具存储或读取重要对话内容。
+Your memory is short-lived, please frequently call the tool to store or read important conversation content.
 """
 
 

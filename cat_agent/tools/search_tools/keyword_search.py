@@ -80,10 +80,9 @@ WORDS_TO_IGNORE = [
     'ain', 'aren', "aren't", 'couldn', "couldn't", 'didn', "didn't", 'doesn', "doesn't", 'hadn', "hadn't", 'hasn',
     "hasn't", 'haven', "haven't", 'isn', "isn't", 'ma', 'mightn', "mightn't", 'mustn', "mustn't", 'needn', "needn't",
     'shan', "shan't", 'shouldn', "shouldn't", 'wasn', "wasn't", 'weren', "weren't", 'won', "won't", 'wouldn',
-    "wouldn't", '', '\\t', '\\n', '\\\\', '\n', '\t', '\\', ' ', ',', '，', ';', '；', '/', '.', '。', '-', '_', '——', '的',
-    '吗', '是', '了', '啊', '呢', '怎么', '如何', '什么', '(', ')', '（', '）', '【', '】', '[', ']', '{', '}', '？', '?', '！', '!',
-    '“', '”', '‘', '’', "'", '"', ':', '：', '讲了', '描述', '讲', '总结', 'summarize', '总结下', '总结一下', '文档', '文章', 'article',
-    'paper', '文稿', '稿子', '论文', 'PDF', 'pdf', '这个', '这篇', '这', '我', '帮我', '那个', '下', '翻译', '说说', '讲讲', '介绍', 'summary'
+    "wouldn't", '', '\\t', '\\n', '\\\\', '\n', '\t', '\\', ' ', ',', ';', '/', '.', '-', '_', '(', ')', '[', ']', '{', '}', '?', '!',
+    "'", '"', ':', 'explained', 'describe', 'explain', 'summarize', 'summary', 'document', 'article',
+    'paper', 'manuscript', 'draft', 'thesis', 'PDF', 'pdf', 'this', 'that', 'me', 'help me', 'that', 'down', 'translate', 'tell', 'introduce'
 ]
 
 ENGLISH_PUNCTUATIONS = string.punctuation.replace('%', '').replace('.', '').replace(

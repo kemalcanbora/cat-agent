@@ -40,23 +40,23 @@ def _check_deps_for_rag():
 
 @register_tool('retrieval')
 class Retrieval(BaseTool):
-    description = f"从给定文件列表中检索出和问题相关的内容，支持文件类型包括：{' / '.join(PARSER_SUPPORTED_FILE_TYPES)}"
+    description = f"Retrieve content relevant to the question from a given list of files. Supported file types include: {' / '.join(PARSER_SUPPORTED_FILE_TYPES)}"
     parameters = {
         'type': 'object',
         'properties': {
             'query': {
-                'description': '在这里列出关键词，用逗号分隔，目的是方便在文档中匹配到相关的内容，由于文档可能多语言，关键词最好中英文都有。',
+                'description': 'List keywords here, separated by commas, to facilitate matching relevant content in the document. Since documents may be multilingual, it is best to have both Chinese and English keywords.',
                 'type': 'string',
             },
             'files': {
-                'description': '待解析的文件路径列表，支持本地文件路径或可下载的http(s)链接。',
+                'description': 'List of file paths to be parsed, supporting local file paths or downloadable http(s) links.',
                 'type': 'array',
                 'items': {
                     'type': 'string'
                 }
             },
             'value': {
-                'description': '数据的内容，仅存数据时需要',
+                'description': 'The content of the data, needed only when saving data.',
                 'type': 'string',
             },
         },
@@ -70,11 +70,13 @@ class Retrieval(BaseTool):
         self.doc_parse = DocParser({'max_ref_token': self.max_ref_token, 'parser_page_size': self.parser_page_size})
 
         self.rag_searchers = self.cfg.get('rag_searchers', DEFAULT_RAG_SEARCHERS)
+        # Pass the full cfg down to sub-searchers so options like `rebuild_rag`
+        # can be honored by implementations such as LeannSearch.
         if len(self.rag_searchers) == 1:
-            self.search = TOOL_REGISTRY[self.rag_searchers[0]]({'max_ref_token': self.max_ref_token})
+            self.search = TOOL_REGISTRY[self.rag_searchers[0]](self.cfg)
         else:
             from cat_agent.tools.search_tools.hybrid_search import HybridSearch
-            self.search = HybridSearch({'max_ref_token': self.max_ref_token, 'rag_searchers': self.rag_searchers})
+            self.search = HybridSearch(self.cfg)
 
     def call(self, params: Union[str, dict], **kwargs) -> list:
         """RAG tool.

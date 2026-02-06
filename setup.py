@@ -69,6 +69,7 @@ setup(
             'python-pptx',
             'pandas',
             'tabulate',
+            'leann==0.3.6'
         ],
 
         # Extra dependencies for MCP:

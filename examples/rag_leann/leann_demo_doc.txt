@@ -1,0 +1,7 @@
+LEANN saves 97% storage compared to traditional vector databases while preserving retrieval accuracy.
+It uses a pruned graph index and recomputes embeddings on demand instead of storing all vectors.
+This demo document is used to test the LEANN-backed semantic search integrated into the Qwen-based cat-agent.
+You can ask questions like:
+- How much storage does LEANN save compared to traditional vector databases?
+- What is special about LEANN's indexing strategy?
+

@@ -19,13 +19,13 @@ from cat_agent import Agent
 from cat_agent.llm.schema import CONTENT, Message
 
 PROMPT_TEMPLATE_ZH = """
-你是一个写作助手，任务是充分理解参考资料，从而完成写作。
-#参考资料：
+You are a writing assistant. Your task is to fully understand the reference materials and complete the writing.
+# References:
 {ref_doc}
 
-写作标题是：{user_request}
+The writing title is: {user_request}
 
-为了完成以上写作任务，请先列出大纲。回复只需包含大纲。大纲的一级标题全部以罗马数字计数。只依据给定的参考资料来写，不要引入其余知识。
+In order to complete the above writing task, please first list the outline. The reply should only contain the outline. All first-level headings of the outline should be numbered with Roman numerals. Write only based on the given reference materials and do not introduce other knowledge.
 """
 
 PROMPT_TEMPLATE_EN = """

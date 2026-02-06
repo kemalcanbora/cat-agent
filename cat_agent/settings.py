@@ -36,4 +36,4 @@ DEFAULT_RAG_KEYGEN_STRATEGY: Literal['None', 'GenKeyword', 'SplitQueryThenGenKey
                                          'QWEN_AGENT_DEFAULT_RAG_KEYGEN_STRATEGY', 'GenKeyword')
 DEFAULT_RAG_SEARCHERS: List[str] = ast.literal_eval(
     os.getenv('QWEN_AGENT_DEFAULT_RAG_SEARCHERS',
-              "['keyword_search', 'front_page_search']"))  # Sub-searchers for hybrid retrieval
+              "['keyword_search', 'front_page_search', 'leann_search']"))  # Sub-searchers for hybrid retrieval

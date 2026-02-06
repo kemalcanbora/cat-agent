@@ -22,37 +22,37 @@ from cat_agent.tools import BaseTool
 from cat_agent.utils.utils import merge_generate_cfgs
 
 NO_RESPONSE = '<None>'
-SYSTEM_PROMPT_TEMPLATE_ZH = """您是一个擅长文档问答的专家，可以根据文档内容回答用户问题。
+SYSTEM_PROMPT_TEMPLATE_ZH = """You are an expert at document-based QA, capable of answering user questions based on document content.
 
 
-# 任务描述：
-请仔细阅读所给的文档片段，并根据其内容回答问题。
-您需要判断文档的内容是否可以回答问题，不要强行回答。如果可以回答，答案必须严格遵循文档内容，即使与事实不符。
-如果答案与事实不符，直接给出答案，不要做解释。
+# Task Description:
+Please read the provided document excerpt carefully and answer the question based on its content.
+You need to determine whether the document content can answer the question; do not force an answer. If it can be answered, the answer must strictly follow the document content, even if it deviates from the facts.
+If the answer deviates from the facts, provide the answer directly without explanation.
 
 
-# 回答规则：
-- 请使用与文档材料相同的语言回答问题。
-- 评估文档是否含有足够信息回答问题。无关时不要回答。
-- 如果问题能被回答，你的回答必须严格遵循文档内容，即使与事实不符。一定不要做多余解释。
-- 如果问题能被回答，直接引用文档的相关信息保证答案准确、完整，并追求简洁。
-- 当文档中只有少量信息与问题相关时，重点关注这部分信息，这种情况下一定回答。
+# Answering Rules:
+- Please answer the question in the same language as the document materials.
+- Assess whether the document contains enough information to answer the question. Do not answer if it's irrelevant.
+- If the question can be answered, your answer must strictly follow the document content, even if it deviates from the facts. Never provide extra explanations.
+- If the question can be answered, directly quote relevant information from the document to ensure the answer is accurate, complete, and strive for conciseness.
+- When only a small amount of information in the document is related to the question, focus on that part of the information; be sure to answer in this case.
 
 
-# 回答格式：
-回答的内容请以JSON的格式给出。
+# Answer Format:
+Please provide the answer in JSON format.
 
 
-## 示例：
-当文档内容无关时：
-{{"res": "none", "content": "{no_response}"}}，
+## Examples:
+When the document content is irrelevant:
+{{"res": "none", "content": "{no_response}"}},
 Observation: ...
 
-当文档内容可回答，且文档为中文时：
-{{"res": "ans", "content": "你的答案"}}
+When the document content is answerable and the document is in Chinese:
+{{"res": "ans", "content": "Your Answer"}}
 Observation: ...
 
-当文档内容可回答，且文档为英文时：
+When the document content is answerable and the document is in English:
 {{"res": "ans", "content": "[Your Answer]"}}
 Observation: ..."""
 
@@ -91,13 +91,13 @@ SYSTEM_PROMPT_TEMPLATE = {
     'en': SYSTEM_PROMPT_TEMPLATE_EN,
 }
 
-PROMPT_TEMPLATE_ZH = """# 文档：
+PROMPT_TEMPLATE_ZH = """# Document:
 {ref_doc}
 
-# 问题：
+# Question:
 {instruction}
 
-请根据回答规则，给出你的回答："""
+Please provide your answer according to the answering rules:"""
 
 PROMPT_TEMPLATE_EN = """# Document:
 {ref_doc}

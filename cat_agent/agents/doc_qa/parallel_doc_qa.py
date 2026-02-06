@@ -37,7 +37,7 @@ from cat_agent.utils.utils import (extract_files_from_messages, extract_text_fro
 
 MAX_NO_RESPONSE_RETRY = 4
 DEFAULT_NAME = 'Simple Parallel DocQA With RAG Sum Agents'
-DEFAULT_DESC = '简易并行后用RAG召回内容，然后回答的Agent'
+DEFAULT_DESC = 'Agent that answers questions after simple parallel RAG recall'
 
 PARALLEL_CHUNK_SIZE = 1000  # chunk size param for parallel chunk
 
@@ -161,7 +161,7 @@ class ParallelDocQA(Assistant):
         return retrieve_res
 
     def _is_none_response(self, text: str) -> bool:
-        none_response_list = ['很抱歉', NO_RESPONSE, "\"res\": \"none\""]
+        none_response_list = ['I am sorry', NO_RESPONSE, "\"res\": \"none\""]
         for none_response in none_response_list:
             if none_response in text.lower():
                 return True

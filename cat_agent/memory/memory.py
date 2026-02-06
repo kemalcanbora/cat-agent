@@ -57,6 +57,27 @@ class Memory(Agent):
         self.max_ref_token: int = self.cfg.get('max_ref_token', DEFAULT_MAX_REF_TOKEN)
         self.parser_page_size: int = self.cfg.get('parser_page_size', DEFAULT_PARSER_PAGE_SIZE)
         self.rag_searchers = self.cfg.get('rag_searchers', DEFAULT_RAG_SEARCHERS)
+        # Optional flag to control whether RAG indexes (e.g. LEANN) are rebuilt
+        # when running retrieval:
+        #   rebuild_rag = True  -> always rebuild indexes from current docs
+        #   rebuild_rag = False -> reuse existing indexes if present
+        #   omitted / None      -> backend-specific default (currently rebuild)
+        self.rebuild_rag: Optional[bool] = self.cfg.get('rebuild_rag', None)
+        # Optional flag to toggle LEANN-based search per run.
+        #   enable_leann = True  -> ensure 'leann_search' is in rag_searchers
+        #   enable_leann = False -> remove 'leann_search' from rag_searchers
+        #   omitted / None       -> use rag_searchers as-is (from cfg or defaults)
+        enable_leann = self.cfg.get('enable_leann', None)
+        if enable_leann is True:
+            if 'leann_search' not in self.rag_searchers:
+                self.rag_searchers = list(self.rag_searchers) + ['leann_search']
+            logger.info(f"[Memory] LEANN search enabled. rag_searchers={self.rag_searchers}")
+        elif enable_leann is False:
+            self.rag_searchers = [s for s in self.rag_searchers if s != 'leann_search']
+            logger.info(f"[Memory] LEANN search disabled. rag_searchers={self.rag_searchers}")
+        else:
+            logger.info(f"[Memory] LEANN flag not set. Using rag_searchers={self.rag_searchers}")
+
         self.rag_keygen_strategy = self.cfg.get('rag_keygen_strategy', DEFAULT_RAG_KEYGEN_STRATEGY)
         if not llm:
             # There is no suitable model available for keygen
@@ -68,6 +89,7 @@ class Memory(Agent):
             'max_ref_token': self.max_ref_token,
             'parser_page_size': self.parser_page_size,
             'rag_searchers': self.rag_searchers,
+            'rebuild_rag': self.rebuild_rag,
         }, {
             'name': 'doc_parser',
             'max_ref_token': self.max_ref_token,

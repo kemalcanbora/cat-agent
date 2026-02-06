@@ -380,12 +380,12 @@ def get_plain_doc(doc: list):
 
 @register_tool('simple_doc_parser')
 class SimpleDocParser(BaseTool):
-    description = f"提取出一个文档的内容，支持类型包括：{' / '.join(PARSER_SUPPORTED_FILE_TYPES)}"
+    description = f"Extract the content of a document. Supported types include: {' / '.join(PARSER_SUPPORTED_FILE_TYPES)}"
     parameters = {
         'type': 'object',
         'properties': {
             'url': {
-                'description': '待提取的文件的路径，可以是一个本地路径或可下载的http(s)链接',
+                'description': 'The path of the file to be extracted, which can be a local path or a downloadable http(s) link.',
                 'type': 'string',
             }
         },

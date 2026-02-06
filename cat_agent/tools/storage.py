@@ -34,21 +34,21 @@ class Storage(BaseTool):
     """
     This is a special tool for data storage (backed by stdlib dbm).
     """
-    description = '存储和读取数据的工具'
+    description = 'Tool for storing and reading data.'
     parameters = {
         'type': 'object',
         'properties': {
             'operate': {
-                'description': '数据操作类型，可选项为["put", "get", "delete", "scan"]之一，分别为存数据、取数据、删除数据、遍历数据',
+                'description': 'Type of data operation, options are ["put", "get", "delete", "scan"], which respectively represent saving data, retrieving data, deleting data, and scanning data.',
                 'type': 'string',
             },
             'key': {
-                'description': '数据的路径，类似于文件路径，是一份数据的唯一标识，不能为空，默认根目录为`/`。存数据时，应该合理的设计路径，保证路径含义清晰且唯一。',
+                'description': 'Data path, similar to a file path, serves as a unique identifier for a piece of data. It cannot be empty and defaults to "/" as the root directory. When saving data, the path should be reasonably designed to ensure clarity and uniqueness.',
                 'type': 'string',
                 'default': '/'
             },
             'value': {
-                'description': '数据的内容，仅存数据时需要',
+                'description': 'The content of the data, needed only when saving data.',
                 'type': 'string',
             },
         },
