@@ -28,44 +28,70 @@
 
 ## Installation
 
-```bash
-pip install cat-agent
+``` bash
+    pip install cat-agent
 ```
 
 **Optional extras:**
 
-```bash
-# RAG (retrieval, doc parsing, etc.)
-pip install cat-agent[rag]
+```  
+    pip install cat-agent[rag] # RAG (retrieval, doc parsing, etc.) 
+    pip install cat-agent[mcp] # MCP (Model Context Protocol) 
+    pip install cat-agent[python_executor] # Python executor (math, sympy, etc.)
+``` 
+ 
+## Examples
 
-# MCP (Model Context Protocol)
-pip install cat-agent[mcp]
+- **Math tool with `Assistant`**
 
-# Python executor (math, sympy, etc.)
-pip install cat-agent[python_executor]
+  Run the example that registers a custom `sum_numbers` tool and uses the `Assistant` agent:
 
-# Code interpreter (Jupyter kernel)
-pip install cat-agent[code_interpreter]
+  ```bash
+  python examples/math_guy/math_guy.py
+  ```
+  
+  Example file location: `examples/math_guy/math_guy.py`
 
-# Gradio GUI
-pip install cat-agent[gui]
-```
+- **RAG with LEANN retriever**
 
-## Quick Start
+  Run a Retrieval-Augmented Generation (RAG) example that uses LEANN as the semantic retriever via `Memory`:
 
-```python
-from cat_agent import Agent
+  ```bash
+  python examples/rag_leann/leann_qwen3_demo.py
+  ```
 
-agent = Agent(
-    llm={'model': 'qwen-plus', 'model_server': 'dashscope'},
-    function_list=['code_interpreter'],
-)
+  Minimal RAG usage in code:
 
-messages = [{'role': 'user', 'content': 'What is 2^10?'}]
-for response in agent.run(messages):
-    if response:
-        print(response)
-```
+  ```python
+  from pathlib import Path
+  from cat_agent.llm.schema import Message, USER
+  from cat_agent.memory import Memory
+  import torch
+
+  examples_dir = Path(__file__).parent
+  doc_path = examples_dir / "leann_demo_doc.txt"
+
+  llm_cfg = {
+      "model": "Qwen/Qwen3-1.7B",
+      "model_type": "transformers",
+      "device": "cuda:0" if torch.cuda.is_available() else "mps",
+  }
+
+  rag_cfg = {
+      "enable_leann": True,
+      "rag_searchers": ["leann_search"],
+  }
+
+  mem = Memory(llm=llm_cfg, files=[str(doc_path)], rag_cfg=rag_cfg)
+  messages = [Message(role=USER, content="How much storage does LEANN save?")]
+  responses = mem.run_nonstream(messages, force_search=True)
+  print(responses[-1].content)
+  ```
+
+  This script:
+  - Creates or loads `examples/rag_leann/leann_demo_doc.txt`
+  - Builds RAG over the document using LEANN (`leann_search`)
+  - Asks a question and prints the retrieved answer
 
 ## Project structure
 
