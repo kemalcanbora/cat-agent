@@ -47,7 +47,7 @@
   Run the example that registers a custom `sum_numbers` tool and uses the `Assistant` agent:
 
   ```bash
-  python examples/math_guy/math_guy.py
+  python examples/transformers_math_guy/math_guy.py
   ```
   
   Example file location: `examples/math_guy/math_guy.py`
