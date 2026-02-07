@@ -86,9 +86,9 @@ class TestParallelDocQAHelpers:
         assert agent._is_none_response('Result: "res": "none"') is True
 
     def test_is_none_response_case_sensitive_checks_against_text_lower(self, agent):
-        # List has 'I am sorry'; check is "none_response in text.lower()".
-        # So 'I am sorry' is not in "i am sorry..." (capital I), hence False.
-        assert agent._is_none_response("I am sorry, I cannot help") is False
+        # List has 'i am sorry'; check is "none_response in text.lower()".
+        # So "I am sorry, I cannot help".lower() = "i am sorry...", and 'i am sorry' is in it → True.
+        assert agent._is_none_response("I am sorry, I cannot help") is True
 
     def test_is_none_response_none_res_in_lower_text(self, agent):
         from cat_agent.agents.doc_qa.parallel_doc_qa_member import NO_RESPONSE

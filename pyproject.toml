@@ -38,7 +38,9 @@ requires-python = ">=3.10"
    "pdfplumber",
    "python-docx",
    "python-pptx",
-   "pandas",
+   "polars",
+   "xlsx2csv",
+   "pyarrow==1.26.4",
    "tabulate",
    "leann==0.3.6",
  ]

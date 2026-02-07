@@ -124,8 +124,8 @@ class TestParseWord:
 class TestDfToMd:
 
     def test_df_to_md_basic(self):
-        pd = pytest.importorskip("pandas")
-        df = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
+        pl = pytest.importorskip("polars")
+        df = pl.DataFrame({"a": [1, 2], "b": [3, 4]})
         out = df_to_md(df)
         assert "a" in out
         assert "b" in out

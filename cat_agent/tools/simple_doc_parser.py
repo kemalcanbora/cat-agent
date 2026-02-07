@@ -1,17 +1,3 @@
-# Copyright 2023 The Qwen team, Alibaba Group. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 import json
 import os
 import re
@@ -125,6 +111,7 @@ def parse_txt(path: str):
 
 
 def df_to_md(df) -> str:
+    """Convert a Polars DataFrame to a markdown table string."""
 
     def replace_long_dashes(text):
         if text.replace('-', '').replace(':', '').strip():
@@ -133,11 +120,30 @@ def df_to_md(df) -> str:
         replaced_text = re.sub(pattern, '-----', text)
         return replaced_text
 
-    from tabulate import tabulate
-    df = df.dropna(how='all')
-    df = df.dropna(axis=1, how='all')
-    df = df.fillna('')
-    md_table = tabulate(df, headers='keys', tablefmt='pipe', showindex=False)
+    import polars as pl
+
+    # Drop columns where all values are null
+    non_null_cols = [col for col in df.columns if df[col].null_count() < len(df)]
+    df = df.select(non_null_cols) if non_null_cols else df
+
+    # Drop rows where all values are null
+    df = df.filter(~pl.all_horizontal(pl.all().is_null()))
+
+    # Fill nulls with empty string (cast all columns to string first)
+    df = df.cast({col: pl.Utf8 for col in df.columns})
+    df = df.fill_null('')
+
+    # Build markdown table
+    headers = df.columns
+    header_row = '| ' + ' | '.join(headers) + ' |'
+    separator_row = '|' + '|'.join([' ----- ' for _ in headers]) + '|'
+
+    data_rows = []
+    for row in df.iter_rows():
+        row_str = '| ' + ' | '.join(str(val) for val in row) + ' |'
+        data_rows.append(row_str)
+
+    md_table = '\n'.join([header_row, separator_row] + data_rows)
 
     md_table = '\n'.join([
         '|'.join(replace_long_dashes(' ' + cell.strip() + ' ' if cell else '')
@@ -151,12 +157,17 @@ def parse_excel(file_path: str, extract_image: bool = False) -> List[dict]:
     if extract_image:
         raise ValueError('Currently, extracting images is not supported!')
 
-    import pandas as pd
+    import polars as pl
 
-    excel_file = pd.ExcelFile(file_path)
+    # Read all sheet names using openpyxl (Polars doesn't natively list sheet names)
+    from openpyxl import load_workbook
+    wb = load_workbook(file_path, read_only=True, data_only=True)
+    sheet_names = wb.sheetnames
+    wb.close()
+
     md_tables = []
-    for sheet_name in excel_file.sheet_names:
-        df = pd.read_excel(file_path, sheet_name=sheet_name)
+    for sheet_name in sheet_names:
+        df = pl.read_excel(file_path, sheet_name=sheet_name)
         md_table = df_to_md(df)
         md_tables.append(f'### Sheet: {sheet_name}\n{md_table}')
 
@@ -167,10 +178,10 @@ def parse_csv(file_path: str, extract_image: bool = False) -> List[dict]:
     if extract_image:
         raise ValueError('Currently, extracting images is not supported!')
 
-    import pandas as pd
+    import polars as pl
     md_tables = []
     try:
-        df = pd.read_csv(file_path, encoding_errors='replace', on_bad_lines='skip')
+        df = pl.read_csv(file_path, ignore_errors=True, truncate_ragged_lines=True)
     except Exception as ex:
         # Directly converted from Excel
         logger.warning(ex)
@@ -185,10 +196,10 @@ def parse_tsv(file_path: str, extract_image: bool = False) -> List[dict]:
     if extract_image:
         raise ValueError('Currently, extracting images is not supported!')
 
-    import pandas as pd
+    import polars as pl
     md_tables = []
     try:
-        df = pd.read_csv(file_path, sep='\t', encoding_errors='replace', on_bad_lines='skip')
+        df = pl.read_csv(file_path, separator='\t', ignore_errors=True, truncate_ragged_lines=True)
     except Exception as ex:
         # Directly converted from Excel
         logger.warning(ex)
