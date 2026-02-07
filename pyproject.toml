@@ -70,6 +70,9 @@ requires-python = ">=3.10"
  Homepage = "https://github.com/kemalcanbora/cat-agent"
  "Issue Tracker" = "https://github.com/kemalcanbora/cat-agent/issues"
 
+ [tool.pytest.ini_options]
+ testpaths = ["tests"]
+
  [tool.setuptools]
  include-package-data = true
 
