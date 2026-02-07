@@ -40,7 +40,7 @@ requires-python = ">=3.10"
    "python-pptx",
    "polars",
    "xlsx2csv",
-   "pyarrow==1.26.4",
+   "pyarrow==17.0.0",
    "tabulate",
    "leann==0.3.6",
  ]
