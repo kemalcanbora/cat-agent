@@ -61,12 +61,17 @@ class GenericRuntime:
 
 
 class DateRuntime(GenericRuntime):
-    import dateutil.relativedelta
-    GLOBAL_DICT = {
-        'datetime': datetime.datetime,
-        'timedelta': dateutil.relativedelta.relativedelta,
-        'relativedelta': dateutil.relativedelta.relativedelta
-    }
+    try:
+        import dateutil.relativedelta as _dateutil_rel
+        GLOBAL_DICT = {
+            'datetime': datetime.datetime,
+            'timedelta': _dateutil_rel.relativedelta,
+            'relativedelta': _dateutil_rel.relativedelta,
+        }
+    except ImportError:
+        GLOBAL_DICT = {
+            'datetime': datetime.datetime,
+        }
 
 
 class CustomDict(dict):

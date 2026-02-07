@@ -127,7 +127,7 @@ class Memory(Agent):
 
             # Keyword generation
             if query and self.rag_keygen_strategy.lower() != 'none':
-                module_name = 'qwen_agent.agents.keygen_strategies'
+                module_name = 'cat_agent.agents.keygen_strategies'
                 module = import_module(module_name)
                 cls = getattr(module, self.rag_keygen_strategy)
                 keygen = cls(llm=self.llm)

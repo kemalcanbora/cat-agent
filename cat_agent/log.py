@@ -17,7 +17,7 @@ import os
 
 
 def setup_logger(level=None):
-    _logger = logging.getLogger('qwen_agent_logger')
+    _logger = logging.getLogger('cat_agent_logger')
     # Disable all logging output for this project.
     _logger.handlers.clear()
     _logger.addHandler(logging.NullHandler())

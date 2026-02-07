@@ -86,7 +86,7 @@ class BaseChatModel(ABC):
         if 'dashscope' in self.model_type:
             self.generate_cfg['incremental_output'] = True
 
-        self.use_raw_api = os.getenv('QWEN_AGENT_USE_RAW_API', 'false').lower() == 'true'
+        self.use_raw_api = os.getenv('CAT_AGENT_USE_RAW_API', 'false').lower() == 'true'
         if 'use_raw_api' in generate_cfg:
             self.use_raw_api = generate_cfg.pop('use_raw_api')
         elif self.model_type == 'qwen_dashscope':
@@ -419,7 +419,7 @@ class BaseChatModel(ABC):
             return self._chat_stream(messages=messages, delta_stream=False, generate_cfg=generate_cfg)
 
     @staticmethod
-    def _conv_qwen_agent_messages_to_oai(messages: List[Union[Message, Dict]]):
+    def _conv_cat_agent_messages_to_oai(messages: List[Union[Message, Dict]]):
         new_messages = []
         for msg in messages:
             if msg['role'] == ASSISTANT:
@@ -458,7 +458,7 @@ class BaseChatModel(ABC):
         - Only supports text LLM
         """
 
-        def _convert_to_qwen_agent_messages(messages):
+        def _convert_to_cat_agent_messages(messages):
             new_messages = []
             for msg in messages:
                 if msg['role'] in ['system', 'user']:
@@ -526,7 +526,7 @@ class BaseChatModel(ABC):
         else:
             functions = None
         for rsp in self.chat(
-                messages=_convert_to_qwen_agent_messages(messages),
+                messages=_convert_to_cat_agent_messages(messages),
                 functions=functions,
                 stream=True,
         ):

@@ -43,7 +43,7 @@ class QwenChatAtDS(BaseFnCallModel):
         messages = [msg.model_dump() for msg in messages]
         if messages[-1]['role'] == ASSISTANT:
             messages[-1]['partial'] = True
-        messages = self._conv_qwen_agent_messages_to_oai(messages)
+        messages = self._conv_cat_agent_messages_to_oai(messages)
         logger.debug(f'LLM Input: \n{pformat(messages, indent=2)}')
         logger.debug(f'LLM Input generate_cfg: \n{generate_cfg}')
         response = dashscope.Generation.call(
@@ -65,7 +65,7 @@ class QwenChatAtDS(BaseFnCallModel):
         messages = [msg.model_dump() for msg in messages]
         if messages[-1]['role'] == ASSISTANT:
             messages[-1]['partial'] = True
-        messages = self._conv_qwen_agent_messages_to_oai(messages)
+        messages = self._conv_cat_agent_messages_to_oai(messages)
         logger.debug(f'LLM Input: \n{pformat(messages, indent=2)}')
         response = dashscope.Generation.call(
             self.model,

@@ -183,7 +183,7 @@ class TextChatAtOAI(BaseFnCallModel):
         #  and reasoning content is currently not useful
         messages = [format_as_text_message(msg, add_upload_info=False) for msg in messages]
         messages = [msg.model_dump() for msg in messages]
-        messages = self._conv_qwen_agent_messages_to_oai(messages)
+        messages = self._conv_cat_agent_messages_to_oai(messages)
 
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(f'LLM Input: \n{pformat(messages, indent=2)}')
