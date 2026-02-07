@@ -56,7 +56,7 @@ def main():
         function_list=["sum_numbers"],
     )
 
-    prompt = f'''/no_think
+    prompt = '''/no_think
             Sum the following numbers: 1, 2, 3, 4, and 5. Just give me the final answer without any explanation or calculation steps.
     '''
 

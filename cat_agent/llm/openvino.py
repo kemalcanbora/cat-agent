@@ -13,15 +13,12 @@
 # limitations under the License.
 
 import copy
-from pprint import pformat
 from threading import Thread
 from typing import Dict, Iterator, List, Optional
 
 from cat_agent.llm.base import register_llm
 from cat_agent.llm.function_calling import BaseFnCallModel
 from cat_agent.llm.schema import ASSISTANT, Message
-from cat_agent.log import logger
-from cat_agent.utils.utils import build_text_completion_prompt
 
 
 @register_llm('openvino')

@@ -16,13 +16,12 @@ import json
 import os
 import random
 import time
-from typing import Dict, List, Optional, OrderedDict, Tuple, Union
+from typing import Dict, OrderedDict, Tuple, Union
 import requests
 
 from pydantic import BaseModel, Field
 
 import socket
-import requests.packages.urllib3.util.connection as connection
 from cat_agent.tools.base import BaseTool, register_tool
 from cat_agent.log import logger
 from cat_agent.llm.schema import Message, ContentItem
@@ -91,8 +90,6 @@ def serper_search(image_url: str, check_accessibility: bool = True, max_retry: i
     }
 
     for _ in range(max_retry):
-        success = False
-        start_time = time.perf_counter()
         response = None
         try:
             response = requests.get(SERPAPI_URL, params=payload)
@@ -122,17 +119,13 @@ def serper_search(image_url: str, check_accessibility: bool = True, max_retry: i
                                 results[image.imgurl] = image
                         else:
                             results[image.imgurl] = image
-                    success = True
                 except Exception as e:
                     logger.warning(f"Failed to parse image item: {e}")
                     continue
             return [x for x in results.values()]
         except Exception as e:
-            response_text = response.text if response and response.text else None
             logger.error(f'image_search_fail, Error: {e}')
             time.sleep(random.uniform(0.1, 1))
-        finally:
-            cost_time = int((time.perf_counter() - start_time) * 1000)
     return []
 
 @register_tool('image_search', allow_overwrite=True)

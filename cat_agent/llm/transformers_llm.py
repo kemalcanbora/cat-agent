@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import copy
-from pprint import pformat
 from threading import Thread
 from typing import Dict, Iterator, List, Optional
 
@@ -45,7 +44,7 @@ class Transformers(BaseFnCallModel):
 
         try:
             import transformers
-            from transformers import AutoConfig, AutoTokenizer, AutoProcessor, AutoModelForCausalLM
+            from transformers import AutoConfig, AutoProcessor
             from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
         except ImportError as e:
             raise ImportError('Could not import classes from transformers. '
@@ -59,7 +58,7 @@ class Transformers(BaseFnCallModel):
         # try loading a processor, if got a tokenizer, regarding the model as text-only
         processor = AutoProcessor.from_pretrained(cfg['model'])
         if isinstance(processor, (PreTrainedTokenizer, PreTrainedTokenizerFast)):
-            logger.info(f'Regarding the transformers model as text-only since its processor is a tokenizer.')
+            logger.info('Regarding the transformers model as text-only since its processor is a tokenizer.')
             self.tokenizer = processor
             self._support_multimodal_input = False
         else:
