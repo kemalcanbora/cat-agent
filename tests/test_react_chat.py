@@ -1,9 +1,8 @@
 """Tests for cat_agent.agents.react_chat."""
 
-import json
 from unittest.mock import MagicMock, patch
 
-from cat_agent.llm.schema import ASSISTANT, USER, Message
+from cat_agent.llm.schema import USER, Message
 from cat_agent.agents.react_chat import ReActChat, TOOL_DESC, PROMPT_REACT
 
 

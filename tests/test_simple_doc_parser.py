@@ -211,7 +211,6 @@ class TestSimpleDocParser:
 
     def test_call_cache_hit_returns_cached(self, parser_path):
         p = SimpleDocParser({"path": parser_path})
-        cached = [{"page_num": 1, "content": [{"text": "cached"}]}]
         with patch.object(p.db, "get", return_value='[{"page_num": 1, "content": [{"text": "cached"}]}]'):
             out = p.call('{"url": "http://example.com/doc.txt"}')
         assert "cached" in out

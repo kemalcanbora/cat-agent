@@ -7,7 +7,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from cat_agent.tools.doc_parser import Chunk, Record, DocParser
-from cat_agent.tools.simple_doc_parser import PARAGRAPH_SPLIT_SYMBOL
 
 
 class TestDocParserModels:

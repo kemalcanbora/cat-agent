@@ -1,7 +1,6 @@
 """Tests for cat_agent.llm.base (LLM_REGISTRY, register_llm, ModelServiceError, BaseChatModel, _truncate_input_messages_roughly)."""
 
-import copy
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -22,7 +21,6 @@ from cat_agent.llm.base import (
 class TestRegisterLlm:
 
     def test_register_llm_adds_to_registry(self):
-        before = set(LLM_REGISTRY.keys())
         try:
             @register_llm("_test_fake_model")
             class FakeModel(BaseChatModel):

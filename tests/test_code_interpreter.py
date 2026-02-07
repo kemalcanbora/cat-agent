@@ -1,6 +1,6 @@
 """Tests for cat_agent.tools.code_interpreter."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
