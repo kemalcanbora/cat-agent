@@ -58,6 +58,7 @@ class LlamaCpp(BaseFnCallModel):
             'n_threads': cfg.get('n_threads'),
             'n_batch': cfg.get('n_batch', 512),
             'verbose': cfg.get('verbose', False),
+            'llama_mmap_supported': True,
         }
 
         if model_path:
