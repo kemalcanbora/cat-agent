@@ -26,6 +26,7 @@ from .qwenvl_dashscope import QwenVLChatAtDS
 from .qwenvl_oai import QwenVLChatAtOAI
 from .llama_cpp import LlamaCpp
 
+
 def get_chat_model(cfg: Union[dict, str] = 'qwen-plus') -> BaseChatModel:
     """The interface of instantiating LLM objects.
 
