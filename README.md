@@ -2,7 +2,7 @@
 
 <div align="center">
 
-<img src="https://pngimg.com/uploads/cat/cat_PNG50523.png" width="120" alt="Cat-Agent" />
+<img src="https://i.ibb.co/gZJj7LTC/Chat-GPT-Image-Feb-7-2026-02-04-10-PM-removebg-preview.png" width="120" alt="Cat-Agent" />
 
 **Enhancing LLMs with Agent Workflows, RAG, Function Calling, and Code Interpreter.**
 
