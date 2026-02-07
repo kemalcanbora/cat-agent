@@ -56,16 +56,7 @@ class FnCallAgent(Agent):
         if not hasattr(self, 'mem'):
             # Default to use Memory to manage files
             if 'qwq' in self.llm.model.lower() or 'qvq' in self.llm.model.lower() or 'qwen3' in self.llm.model.lower():
-                if 'dashscope' in self.llm.model_type:
-                    mem_llm = {
-                        'model': 'qwen-turbo',
-                        'model_type': 'qwen_dashscope',
-                        'generate_cfg': {
-                            'max_input_tokens': 30000
-                        }
-                    }
-                else:
-                    mem_llm = None
+                mem_llm = None
             else:
                 mem_llm = self.llm
             self.mem = Memory(llm=mem_llm, files=files, **kwargs)

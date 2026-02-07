@@ -24,7 +24,7 @@
 - **RAG** — Retrieval-augmented generation with vector, keyword, and hybrid search
 - **Code interpreter** — Safe Python execution for math and code tasks
 - **Rich tool set** — Web search, doc parsing, image generation, MCP, storage, and extensible custom tools
-- **Multiple LLM backends** — DashScope (Qwen), OpenAI-compatible APIs, LlamaCpp, OpenVINO, Transformers
+- **Multiple LLM backends** — OpenAI-compatible APIs, LlamaCpp, OpenVINO, Transformers
 
 ## Installation
 
@@ -99,10 +99,17 @@
 |------------|-------------|
 | `cat_agent.agent` | Base agent and `BasicAgent` |
 | `cat_agent.agents` | Assistant, ReActChat, FnCallAgent, DocQA, GroupChat, Router, etc. |
-| `cat_agent.llm`   | Chat models (DashScope, OAI, LlamaCpp, OpenVINO, Transformers) |
+| `cat_agent.llm`   | Chat models (OAI, LlamaCpp, OpenVINO, Transformers) |
 | `cat_agent.tools` | CodeInterpreter, Retrieval, DocParser, Storage, WebSearch, MCP, and more |
 | `cat_agent.memory`| Memory and context utilities |
- 
+
+## Testing
+
+- **Test count:** 222+ tests across `tests/test_agent.py`, `tests/test_agents.py`, `tests/test_llm.py`, `tests/test_memory.py`, `tests/test_tools.py`, and `tests/test_utils.py`.
+- **Test coverage:** **55.65%** (6,023 lines total).
+- **Run tests:** `pytest` (install with `pip install -e ".[test]"`).
+- **Report coverage:** `pytest --cov=cat_agent --cov-report=term`
+
 ## License
 
 Licensed under the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0).

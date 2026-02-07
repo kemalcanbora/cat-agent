@@ -38,5 +38,5 @@ jobs:
           ruff check .
         continue-on-error: true
 
-      - name: Run tests
-        run: pytest
+      - name: Run tests with coverage
+        run: pytest --cov=cat_agent --cov-report=term-missing --cov-fail-under=50

@@ -83,17 +83,10 @@ class BaseChatModel(ABC):
         self.max_retries = generate_cfg.pop('max_retries', 0)
         self.generate_cfg = generate_cfg
         self.model_type = cfg.get('model_type', '')
-        if 'dashscope' in self.model_type:
-            self.generate_cfg['incremental_output'] = True
 
         self.use_raw_api = os.getenv('CAT_AGENT_USE_RAW_API', 'false').lower() == 'true'
         if 'use_raw_api' in generate_cfg:
             self.use_raw_api = generate_cfg.pop('use_raw_api')
-        elif self.model_type == 'qwen_dashscope':
-            # set qwen3-max to `use_raw_api`
-            if not self.use_raw_api:
-                logger.info('Setting `use_raw_api` to True when using `Qwen3-Max`')
-                self.use_raw_api = True
 
         if cache_dir:
             try:

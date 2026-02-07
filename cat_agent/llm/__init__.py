@@ -12,17 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import copy
 from typing import Union
 
 from .base import LLM_REGISTRY, BaseChatModel, ModelServiceError
 from .oai import TextChatAtOAI
 from .openvino import OpenVINO
 from .transformers_llm import Transformers
-from .qwen_dashscope import QwenChatAtDS
-from .qwenaudio_dashscope import QwenAudioChatAtDS
 from .qwenomni_oai import QwenOmniChatAtOAI
-from .qwenvl_dashscope import QwenVLChatAtDS
 from .qwenvl_oai import QwenVLChatAtOAI
 from .llama_cpp import LlamaCpp
 
@@ -33,10 +29,6 @@ def get_chat_model(cfg: Union[dict, str] = 'qwen-plus') -> BaseChatModel:
     Args:
         cfg: The LLM configuration, one example is:
           cfg = {
-              # Use the model service provided by DashScope:
-              'model': 'qwen-max',
-              'model_server': 'dashscope',
-
               # Use your own model service compatible with OpenAI API:
               # 'model': 'Qwen',
               # 'model_server': 'http://127.0.0.1:7905/v1',
@@ -58,13 +50,8 @@ def get_chat_model(cfg: Union[dict, str] = 'qwen-plus') -> BaseChatModel:
     if 'model_type' in cfg:
         model_type = cfg['model_type']
         if model_type in LLM_REGISTRY:
-            if model_type in ('oai', 'qwenvl_oai'):
-                if cfg.get('model_server', '').strip() == 'dashscope':
-                    cfg = copy.deepcopy(cfg)
-                    cfg['model_server'] = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
             return LLM_REGISTRY[model_type](cfg)
-        else:
-            raise ValueError(f'Please set model_type from {str(LLM_REGISTRY.keys())}')
+        raise ValueError(f'Please set model_type from {str(LLM_REGISTRY.keys())}')
 
     # Deduce model_type from model and model_server if model_type is not provided:
 
@@ -77,17 +64,12 @@ def get_chat_model(cfg: Union[dict, str] = 'qwen-plus') -> BaseChatModel:
     model = cfg.get('model', '')
 
     if '-vl' in model.lower():
-        model_type = 'qwenvl_dashscope'
-        cfg['model_type'] = model_type
-        return LLM_REGISTRY[model_type](cfg)
-
-    if '-audio' in model.lower():
-        model_type = 'qwenaudio_dashscope'
+        model_type = 'qwenvl_oai'
         cfg['model_type'] = model_type
         return LLM_REGISTRY[model_type](cfg)
 
     if 'qwen' in model.lower():
-        model_type = 'qwen_dashscope'
+        model_type = 'oai'
         cfg['model_type'] = model_type
         return LLM_REGISTRY[model_type](cfg)
 
@@ -96,11 +78,8 @@ def get_chat_model(cfg: Union[dict, str] = 'qwen-plus') -> BaseChatModel:
 
 __all__ = [
     'BaseChatModel',
-    'QwenChatAtDS',
     'TextChatAtOAI',
-    'QwenVLChatAtDS',
     'QwenVLChatAtOAI',
-    'QwenAudioChatAtDS',
     'QwenOmniChatAtOAI',
     'OpenVINO',
     'Transformers',

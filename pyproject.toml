@@ -13,13 +13,13 @@ license = { text = "Apache-2.0" }
 keywords = ["LLM", "Agent", "Function Calling", "RAG", "Code Interpreter"]
 requires-python = ">=3.10"
  dependencies = [
-   "dashscope>=1.11.0",
    "eval_type_backport",
    "json5",
    "jsonlines",
    "jsonschema",
    "openai",
    "pydantic>=2.3.0",
+   "pydantic-core==2.23.4",
    "requests",
    "tiktoken",
    "pillow",
@@ -58,13 +58,9 @@ requires-python = ">=3.10"
    "jupyter>=1.0.0",
    "uvicorn>=0.23.2",
  ]
- gui = [
-   "pydantic==2.9.2",
-   "pydantic-core==2.23.4",
-   "modelscope_studio==1.1.7",
- ]
  test = [
    "pytest",
+   "pytest-cov",
  ]
 
  [project.urls]
@@ -89,7 +85,5 @@ requires-python = ">=3.10"
    "utils/qwen.tiktoken",
    "tools/resource/*.ttf",
    "tools/resource/*.py",
-   "gui/assets/*.css",
-   "gui/assets/*.jpeg",
  ]
 

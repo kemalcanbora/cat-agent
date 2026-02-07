@@ -32,7 +32,7 @@ class VectorSearch(BaseSearch):
         except ModuleNotFoundError:
             raise ModuleNotFoundError('Please install langchain by: `pip install langchain`')
         try:
-            from langchain_community.embeddings import DashScopeEmbeddings
+            from langchain_community.embeddings import OpenAIEmbeddings
             from langchain_community.vectorstores import FAISS
         except ModuleNotFoundError:
             raise ModuleNotFoundError(
@@ -53,8 +53,7 @@ class VectorSearch(BaseSearch):
             for chk in doc.raw:
                 all_chunks.append(Document(page_content=chk.content[:2000], metadata=chk.metadata))
 
-        embeddings = DashScopeEmbeddings(model='text-embedding-v1',
-                                         dashscope_api_key=os.getenv('DASHSCOPE_API_KEY', ''))
+        embeddings = OpenAIEmbeddings(openai_api_key=os.getenv('OPENAI_API_KEY', ''))
         db = FAISS.from_documents(all_chunks, embeddings)
         chunk_and_score = db.similarity_search_with_score(query, k=len(all_chunks))
 
