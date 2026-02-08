@@ -40,6 +40,7 @@ requires-python = ">=3.10"
    "python-pptx",
    "polars",
    "xlsx2csv",
+   "fastexcel",
    "pyarrow==17.0.0",
    "tabulate",
    "leann==0.3.6",
@@ -76,7 +77,7 @@ requires-python = ">=3.10"
  include-package-data = true
 
  [tool.setuptools.packages.find]
- exclude = ["examples", "examples.*", "qwen_server", "qwen_server.*"]
+ exclude = ["examples", "examples.*"]
 
  [tool.setuptools.dynamic]
  version = { attr = "cat_agent.__version__" }

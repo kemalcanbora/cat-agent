@@ -263,9 +263,9 @@ class TestGetFileType:
         assert utils_module.get_file_type("file.docx") == "docx"
 
     def test_txt_via_mock_read(self):
-        with patch("cat_agent.utils.utils.read_text_from_file", return_value="<p>html</p>"):
+        with patch("cat_agent.utils.file_utils.read_text_from_file", return_value="<p>html</p>"):
             out = utils_module.get_file_type("/nonexistent/doc.txt")
             assert out == "html"
-        with patch("cat_agent.utils.utils.read_text_from_file", return_value="plain text"):
+        with patch("cat_agent.utils.file_utils.read_text_from_file", return_value="plain text"):
             out = utils_module.get_file_type("/nonexistent/doc.txt")
             assert out == "txt"

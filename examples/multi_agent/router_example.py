@@ -6,7 +6,7 @@ from cat_agent.utils.output_beautify import typewriter_print
 LLM_CFG = {
     "model": "Qwen/Qwen3-1.7B",
     "model_type": "transformers",
-    "device": "cuda:0" if torch.cuda.is_available() else "mps",
+    "device": "cuda:0" if torch.cuda.is_available() else "cpu",
     "generate_cfg": {
         "max_input_tokens": 512,
         "max_new_tokens": 256,

@@ -1,4 +1,4 @@
-"""Tests for cat_agent.llm.base (LLM_REGISTRY, register_llm, ModelServiceError, BaseChatModel, _truncate_input_messages_roughly)."""
+"""Tests for cat_agent.llm.base (LLM_REGISTRY, register_llm, ModelServiceError, BaseChatModel, truncate_input_messages_roughly)."""
 
 from unittest.mock import patch
 
@@ -10,7 +10,7 @@ from cat_agent.llm.base import (
     ModelServiceError,
     BaseChatModel,
     register_llm,
-    _truncate_input_messages_roughly,
+    truncate_input_messages_roughly,
 )
 
 
@@ -123,13 +123,13 @@ class TestBaseChatModel:
 
 
 # ---------------------------------------------------------------------------
-# _truncate_input_messages_roughly
+# truncate_input_messages_roughly
 # ---------------------------------------------------------------------------
 
 class TestTruncateInputMessagesRoughly:
 
     def test_empty_messages_returns_empty(self):
-        result = _truncate_input_messages_roughly([], max_tokens=1000)
+        result = truncate_input_messages_roughly([], max_tokens=1000)
         assert result == []
 
     def test_two_system_messages_raises(self):
@@ -138,14 +138,14 @@ class TestTruncateInputMessagesRoughly:
             Message(role=SYSTEM, content="Second"),
         ]
         with pytest.raises(ModelServiceError, match="no more than one system"):
-            _truncate_input_messages_roughly(messages, max_tokens=10000)
+            truncate_input_messages_roughly(messages, max_tokens=10000)
 
     def test_first_message_assistant_raises(self):
         messages = [
             Message(role=ASSISTANT, content="Reply"),
         ]
         with pytest.raises(ModelServiceError, match="start with a user message"):
-            _truncate_input_messages_roughly(messages, max_tokens=10000)
+            truncate_input_messages_roughly(messages, max_tokens=10000)
 
     def test_system_plus_user_under_limit_returns_unchanged(self):
         messages = [
@@ -154,7 +154,7 @@ class TestTruncateInputMessagesRoughly:
             Message(role=ASSISTANT, content="Hello"),
         ]
         # Use a very large max_tokens so we don't actually truncate (avoids complex token counting in test)
-        result = _truncate_input_messages_roughly(messages, max_tokens=1_000_000)
+        result = truncate_input_messages_roughly(messages, max_tokens=1_000_000)
         assert len(result) == 3
         assert result[0].role == SYSTEM
         assert result[1].content == "Hi"

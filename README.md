@@ -74,7 +74,7 @@
   llm_cfg = {
       "model": "Qwen/Qwen3-1.7B",
       "model_type": "transformers",
-      "device": "cuda:0" if torch.cuda.is_available() else "mps",
+      "device": "cuda:0" if torch.cuda.is_available() else "cpu",
   }
 
   rag_cfg = {
@@ -106,7 +106,7 @@
 ## Testing
 
 - **Test count:** 222+ tests across `tests/test_agent.py`, `tests/test_agents.py`, `tests/test_llm.py`, `tests/test_memory.py`, `tests/test_tools.py`, and `tests/test_utils.py`.
-- **Test coverage:** **55%** (5,902 lines total).
+- **Test coverage:** **57%** (5,909 lines total).
 - **Run tests:** `pytest` (install with `pip install -e ".[test]"`).
 - **Report coverage:** `pytest --cov=cat_agent --cov-report=term`
 

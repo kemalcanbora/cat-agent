@@ -83,7 +83,7 @@ class TestDocParserError:
 class TestParseTxt:
 
     def test_parse_txt_returns_one_page_with_paragraphs(self):
-        with patch("cat_agent.tools.simple_doc_parser.read_text_from_file", return_value="Line one\nLine two"):
+        with patch("cat_agent.tools.parsers.txt_parser.read_text_from_file", return_value="Line one\nLine two"):
             doc = parse_txt("/fake/path.txt")
         assert len(doc) == 1
         assert doc[0]["page_num"] == 1
@@ -218,7 +218,7 @@ class TestSimpleDocParser:
     def test_call_parse_txt_integration(self, parser_path):
         p = SimpleDocParser({"path": parser_path})
         with patch("cat_agent.tools.simple_doc_parser.get_file_type", return_value="txt"):
-            with patch("cat_agent.tools.simple_doc_parser.read_text_from_file", return_value="Hello\nWorld"):
+            with patch("cat_agent.tools.parsers.txt_parser.read_text_from_file", return_value="Hello\nWorld"):
                 with patch.object(p.db, "get", side_effect=KeyNotExistsError("key")):
                     with patch.object(p.db, "put"):
                         out = p.call('{"url": "/local/file.txt"}')
@@ -228,7 +228,7 @@ class TestSimpleDocParser:
     def test_call_parse_docx_mocked(self, parser_path):
         p = SimpleDocParser({"path": parser_path})
         with patch("cat_agent.tools.simple_doc_parser.get_file_type", return_value="docx"):
-            with patch("cat_agent.tools.simple_doc_parser.parse_word", return_value=[{"page_num": 1, "content": [{"text": "docx"}]}]):
+            with patch("cat_agent.tools.parsers.word_parser.parse_word", return_value=[{"page_num": 1, "content": [{"text": "docx"}]}]):
                 with patch.object(p.db, "get", side_effect=KeyNotExistsError("key")):
                     with patch.object(p.db, "put"):
                         out = p.call('{"url": "/local/file.docx"}')
