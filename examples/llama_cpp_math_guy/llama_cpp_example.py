@@ -31,8 +31,8 @@ def main():
     # Use a local GGUF file, or repo_id + filename for HuggingFace
     llm_cfg = {
         "model_type": "llama_cpp",
-        "repo_id": "enacimie/Qwen3-1.7B-Q4_K_M-GGUF",
-        "filename": "qwen3-1.7b-q4_k_m.gguf",
+        "repo_id": "Salesforce/xLAM-2-3b-fc-r-gguf",
+        "filename": "xLAM-2-3B-fc-r-F16.gguf",
         "n_ctx": 4096,
         "n_gpu_layers": -1,
         "n_threads": 6,
