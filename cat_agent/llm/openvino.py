@@ -42,7 +42,7 @@ class OpenVINO(BaseFnCallModel):
         - then run code `request.get(image_url)` to download the image,
         - and finally select an image operation from the given document to process the image.
         Please show the image using `plt.show()`.'''
-        tools = ['my_image_gen', 'code_interpreter']
+        tools = ['code_interpreter']
         files = ['./examples/resource/doc.pdf']
         bot = Assistant(llm=llm_cfg,
                 system_message=system_instruction,

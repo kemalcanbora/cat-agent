@@ -55,7 +55,7 @@ class GroupChat(Agent, MultiAgentHub):
                         'description': 'A sports student',
                         'instructions': 'You are a sports student who loves sports.',
                         'knowledge_files': ['http://example.html'],
-                        'selected_tools': ['image_gen']
+                        'selected_tools': ['code_interpreter']
                     }]
               }
             agent_selection_method: The method of select speaker:

@@ -106,7 +106,7 @@
 ## Testing
 
 - **Test count:** 222+ tests across `tests/test_agent.py`, `tests/test_agents.py`, `tests/test_llm.py`, `tests/test_memory.py`, `tests/test_tools.py`, and `tests/test_utils.py`.
-- **Test coverage:** **57%** (5,909 lines total).
+- **Test coverage:** **60%** (5,949 lines total).
 - **Run tests:** `pytest` (install with `pip install -e ".[test]"`).
 - **Report coverage:** `pytest --cov=cat_agent --cov-report=term`
 

@@ -70,6 +70,6 @@ class TestBaseTool:
 class TestToolRegistry:
 
     def test_registry_contains_expected_tools(self):
-        expected = {"storage", "simple_doc_parser", "doc_parser", "retrieval", "web_extractor", "web_search", "image_gen", "image_search", "front_page_search"}
+        expected = {"storage", "simple_doc_parser", "doc_parser", "retrieval", "web_extractor", "web_search", "image_search", "front_page_search"}
         found = expected & set(TOOL_REGISTRY.keys())
         assert len(found) >= 5, f"Expected at least 5 of {expected}, got {found}"

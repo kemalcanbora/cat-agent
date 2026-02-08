@@ -1,17 +1,3 @@
-# Copyright 2023 The Qwen team, Alibaba Group. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 import copy
 import datetime
 import io
@@ -27,14 +13,30 @@ import json5
 import regex
 from tqdm import tqdm
 
+from cat_agent.log import logger
 from cat_agent.tools.base import BaseTool
 from cat_agent.utils.utils import extract_code
 
+# Patterns that should never be allowed in executed code.
+# This is a best-effort blocklist -- *not* a sandbox.
+_DANGEROUS_PATTERNS = [
+    r'(?:\s|^|;)input\s*\(',          # interactive input
+    r'(?:\s|^|;)os\.system\s*\(',      # shell via os.system
+    r'(?:\s|^|;)subprocess\b',         # subprocess module
+    r'(?:\s|^|;)shutil\.rmtree\s*\(',  # recursive delete
+    r'__import__\s*\(',                # dynamic imports
+    r'(?:\s|^|;)exec\s*\(',           # nested exec
+    r'(?:\s|^|;)eval\s*\(',           # nested eval
+    r'importlib\.import_module\s*\(',  # dynamic imports via importlib
+]
+
+_DANGEROUS_RE = regex.compile('|'.join(_DANGEROUS_PATTERNS))
+
 
 class GenericRuntime:
-    GLOBAL_DICT = {}
-    LOCAL_DICT = None
-    HEADERS = []
+    GLOBAL_DICT: Dict[str, Any] = {}
+    LOCAL_DICT: Optional[Dict[str, Any]] = None
+    HEADERS: List[str] = []
 
     def __init__(self):
         self._global_vars = copy.copy(self.GLOBAL_DICT)
@@ -44,8 +46,12 @@ class GenericRuntime:
             self.exec_code(c)
 
     def exec_code(self, code_piece: str) -> None:
-        if regex.search(r'(\s|^)?input\(', code_piece) or regex.search(r'(\s|^)?os.system\(', code_piece):
-            raise RuntimeError()
+        if _DANGEROUS_RE.search(code_piece):
+            raise RuntimeError(
+                'Code contains a blocked pattern. '
+                'Disallowed constructs: input(), os.system(), subprocess, '
+                'shutil.rmtree(), __import__(), exec(), eval(), importlib.import_module()'
+            )
         exec(code_piece, self._global_vars)
 
     def eval_code(self, expr: str) -> Any:
@@ -85,16 +91,18 @@ class ColorObjectRuntime(GenericRuntime):
 
 
 def _check_deps_for_python_executor():
-    try:
-        import dateutil.relativedelta  # noqa
-        import multiprocess  # noqa
-        from multiprocess import Pool  # noqa
-        from pebble import ProcessPool  # noqa
-        from timeout_decorator import timeout  # noqa
-    except ImportError as e:
+    """Verify that optional heavy dependencies are installed."""
+    missing = []
+    for mod in ('dateutil.relativedelta', 'multiprocess', 'pebble', 'timeout_decorator'):
+        try:
+            __import__(mod)
+        except ImportError:
+            missing.append(mod)
+    if missing:
         raise ImportError(
-            'The dependencies for Python Executor support are not installed. '
-            'Please install the required dependencies by running: pip install "qwen-agent[python_executor]"') from e
+            f'Missing dependencies for Python Executor: {", ".join(missing)}. '
+            'Please install them by running: pip install "qwen-agent[python_executor]"'
+        )
 
 
 # @register_tool('python_executor')  # Do not register this tool by default because it is dangerous.
@@ -114,8 +122,6 @@ class PythonExecutor(BaseTool):
 
     def __init__(self, cfg: Optional[Dict] = None):
         _check_deps_for_python_executor()
-        import multiprocess
-        from multiprocess import Pool
         super().__init__(cfg)
 
         runtime: Optional[Any] = self.cfg.get('runtime', None)
@@ -128,7 +134,6 @@ class PythonExecutor(BaseTool):
         self.answer_symbol = get_answer_symbol
         self.answer_expr = get_answer_expr
         self.get_answer_from_stdout = get_answer_from_stdout
-        self.pool = Pool(multiprocess.cpu_count())
         self.timeout_length = timeout_length
 
     def call(self, params: Union[str, dict], **kwargs) -> list:
@@ -147,9 +152,6 @@ class PythonExecutor(BaseTool):
     def apply(self, code: str) -> list:
         return self.batch_apply([code])[0]
 
-    def process_generation_to_code(self, gens: str):
-        return [g.split('\n') for g in gens]
-
     @staticmethod
     def execute(
         code,
@@ -159,58 +161,68 @@ class PythonExecutor(BaseTool):
         answer_expr=None,
         timeout_length=20,
     ):
-        from timeout_decorator import timeout
+        from timeout_decorator import timeout as timeout_decorator
         try:
             if get_answer_from_stdout:
                 program_io = io.StringIO()
-                with redirect_stdout(program_io):
-                    timeout(timeout_length)(runtime.exec_code)('\n'.join(code))
-                program_io.seek(0)
-                result = program_io.read()
+                try:
+                    with redirect_stdout(program_io):
+                        timeout_decorator(timeout_length)(runtime.exec_code)(code)
+                    program_io.seek(0)
+                    result = program_io.read()
+                finally:
+                    program_io.close()
             elif answer_symbol:
-                timeout(timeout_length)(runtime.exec_code)('\n'.join(code))
+                timeout_decorator(timeout_length)(runtime.exec_code)(code)
                 result = runtime._global_vars[answer_symbol]
             elif answer_expr:
-                timeout(timeout_length)(runtime.exec_code)('\n'.join(code))
-                result = timeout(timeout_length)(runtime.eval_code)(answer_expr)
+                timeout_decorator(timeout_length)(runtime.exec_code)(code)
+                result = timeout_decorator(timeout_length)(runtime.eval_code)(answer_expr)
             else:
-                timeout(timeout_length)(runtime.exec_code)('\n'.join(code[:-1]))
-                result = timeout(timeout_length)(runtime.eval_code)(code[-1])
+                # Execute all lines except the last, then evaluate the final line
+                lines = code.rsplit('\n', 1)
+                if len(lines) == 2 and lines[0].strip():
+                    timeout_decorator(timeout_length)(runtime.exec_code)(lines[0])
+                result = timeout_decorator(timeout_length)(runtime.eval_code)(lines[-1])
             report = 'Done'
             str(result)
             pickle.dumps(result)  # serialization check
         except Exception:
             result = ''
-            report = traceback.format_exc().split('\n')[-2]
+            # Capture the meaningful part of the traceback
+            tb = traceback.format_exc().strip()
+            tb_lines = [line for line in tb.split('\n') if line.strip()]
+            report = tb_lines[-1] if tb_lines else 'Unknown error'
         return result, report
 
     @staticmethod
-    def truncate(s, max_length=256):
+    def truncate(s, max_length=800):
         half = max_length // 2
         if len(s) > max_length:
-            s = s[:half] + '...' + s[-half:]
+            s = s[:half] + f'... [{len(s) - max_length} chars truncated] ...' + s[-half:]
         return s
 
     def batch_apply(self, batch_code: List[str]) -> list:
         from pebble import ProcessPool
-        all_code_snippets = self.process_generation_to_code(batch_code)
 
         timeout_cnt = 0
         all_exec_results = []
-        with ProcessPool(max_workers=min(len(all_code_snippets), os.cpu_count())) as pool:
+        max_workers = min(len(batch_code), os.cpu_count() or 1)
+
+        with ProcessPool(max_workers=max_workers) as pool:
             executor = partial(
                 self.execute,
                 get_answer_from_stdout=self.get_answer_from_stdout,
                 runtime=self.runtime,
                 answer_symbol=self.answer_symbol,
                 answer_expr=self.answer_expr,
-                timeout_length=self.timeout_length,  # this timeout not work
+                timeout_length=self.timeout_length,
             )
-            future = pool.map(executor, all_code_snippets, timeout=self.timeout_length)
+            future = pool.map(executor, batch_code, timeout=self.timeout_length)
             iterator = future.result()
 
-            if len(all_code_snippets) > 100:
-                progress_bar = tqdm(total=len(all_code_snippets), desc='Execute')
+            if len(batch_code) > 100:
+                progress_bar = tqdm(total=len(batch_code), desc='Execute')
             else:
                 progress_bar = None
 
@@ -221,21 +233,23 @@ class PythonExecutor(BaseTool):
                 except StopIteration:
                     break
                 except TimeoutError as error:
-                    print(error)
+                    logger.warning('PythonExecutor: execution timed out: %s', error)
                     all_exec_results.append(('', 'Timeout Error'))
                     timeout_cnt += 1
                 except Exception as error:
-                    print(error)
-                    exit()
+                    logger.error('PythonExecutor: unexpected error during execution: %s', error, exc_info=True)
+                    all_exec_results.append(('', f'Execution Error: {error}'))
                 if progress_bar is not None:
                     progress_bar.update(1)
 
             if progress_bar is not None:
                 progress_bar.close()
 
+        if timeout_cnt:
+            logger.info('PythonExecutor: %d/%d executions timed out', timeout_cnt, len(batch_code))
+
         batch_results = []
-        for code, (res, report) in zip(all_code_snippets, all_exec_results):
-            # post processing
+        for code, (res, report) in zip(batch_code, all_exec_results):
             res, report = str(res).strip(), str(report).strip()
             res, report = self.truncate(res), self.truncate(report)
             batch_results.append((res, report))
@@ -247,7 +261,7 @@ def _test():
         print("Hello world!")
         """]
 
-    executor = PythonExecutor(get_answer_from_stdout=True)
+    executor = PythonExecutor(cfg={'get_answer_from_stdout': True})
     predictions = executor.apply(batch_code[0])
     print(predictions)
 
