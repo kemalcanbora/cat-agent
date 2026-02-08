@@ -183,7 +183,7 @@ def check_image_url_accessibility(url: str, timeout: int = 10) -> Tuple[str, boo
         Tuple[str, bool]: A tuple containing the URL and a boolean indicating if it's accessible (True if status is 200)
     """
     try:
-        response = requests.head(url, timeout=timeout, allow_redirects=True)
+        response = requests.head(url, timeout=timeout, allow_redirects=True, headers={'User-Agent': 'Mozilla/5.0'})
         return url, response.status_code == 200
     except Exception as e:
         logger.debug(f"Image URL not accessible: {url}, error: {e}")

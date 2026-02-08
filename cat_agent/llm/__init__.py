@@ -21,6 +21,7 @@ from .transformers_llm import Transformers
 from .qwenomni_oai import QwenOmniChatAtOAI
 from .qwenvl_oai import QwenVLChatAtOAI
 from .llama_cpp import LlamaCpp
+from .llama_cpp_vision import LlamaCppVision
 
 
 def get_chat_model(cfg: Union[dict, str] = 'qwen-plus') -> BaseChatModel:
@@ -86,4 +87,5 @@ __all__ = [
     'get_chat_model',
     'ModelServiceError',
     'LlamaCpp',
+    'LlamaCppVision',
 ]
