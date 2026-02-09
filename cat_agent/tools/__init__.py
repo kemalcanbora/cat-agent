@@ -22,6 +22,7 @@ from .image_search import ImageSearch
 from .search_tools import FrontPageSearch, HybridSearch, KeywordSearch, VectorSearch
 from .simple_doc_parser import SimpleDocParser
 from .storage import Storage
+from .wasm_code_interpreter import WasmCodeInterpreter
 from .web_extractor import WebExtractor
 from .mcp_manager import MCPManager
 from .web_search import WebSearch
@@ -43,5 +44,6 @@ __all__ = [
     'ExtractDocVocabulary',
     'PythonExecutor',
     'MCPManager',
+    'WasmCodeInterpreter',
     'WebSearch',
 ]
