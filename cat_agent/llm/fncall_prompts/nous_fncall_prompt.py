@@ -1,17 +1,3 @@
-# Copyright 2023 The Qwen team, Alibaba Group. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 import copy
 import json
 import os
@@ -146,8 +132,29 @@ class NousFnCallPrompt(BaseFnCallPrompt):
                     item_text = _item_text[-1]
 
                 i = item_text.find('<tool_call>')
-                # If no function call:
+                # If no <tool_call> tag, try parsing as raw JSON function call array
+                # (some models output [{"name": ..., "arguments": ...}] without XML tags):
                 if i < 0:
+                    fn_list = _try_parse_json_fncalls(item_text.strip())
+                    if fn_list:
+                        for fn in fn_list:
+                            if new_content:
+                                new_messages.append(Message(role=role, content=new_content, extra=extra))
+                                new_content = []
+                            _extra = copy.deepcopy(extra) if extra else {}
+                            _extra['function_id'] = str(tool_id)
+                            tool_id += 1
+                            new_messages.append(
+                                Message(
+                                    role=ASSISTANT,
+                                    content=[],
+                                    function_call=FunctionCall(
+                                        name=fn['name'],
+                                        arguments=json.dumps(fn['arguments'], ensure_ascii=False),
+                                    ),
+                                    extra=_extra,
+                                ))
+                        continue
                     show_text = item_text
                     if show_text:
                         new_content.append(ContentItem(text=show_text))
@@ -242,10 +249,6 @@ class NousFnCallPrompt(BaseFnCallPrompt):
                                 ),
                                 extra=_extra,
                             ))
-                    # Expected not to output extra tails
-                    # if one_tool_call_txt[1].strip():
-                    #     new_content.append(ContentItem(text=one_tool_call_txt[1]))
-
             if new_content:
                 new_messages.append(Message(role=role, content=new_content, extra=extra))
         return new_messages
@@ -295,6 +298,26 @@ def remove_incomplete_special_tokens(text: str) -> str:
     if text in '<tool_call>\n{"name": "':
         text = ''
     return text
+
+
+def _try_parse_json_fncalls(text: str):
+    """Try to parse text as a JSON array of function calls when <tool_call> tags are absent.
+
+    Returns a list of dicts with 'name' and 'arguments' keys, or None if parsing fails.
+    """
+    text = text.strip()
+    if not text.startswith('['):
+        return None
+    try:
+        calls = json5.loads(text)
+        if isinstance(calls, list) and calls and all(
+            isinstance(c, dict) and 'name' in c and 'arguments' in c
+            for c in calls
+        ):
+            return calls
+    except Exception:
+        pass
+    return None
 
 
 def extract_fn(text: str):
