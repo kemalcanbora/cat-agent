@@ -42,6 +42,9 @@ htmlcov/
 coverage.xml
 *.cover
 
+# Workspace / runtime artifacts
+workspace/
+
 # Misc
 .DS_Store
 *.log
