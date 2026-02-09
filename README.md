@@ -216,6 +216,10 @@ bot = Assistant(
 - **Run tests:** `pytest` (install with `pip install -e ".[test]"`).
 - **Report coverage:** `pytest --cov=cat_agent --cov-report=term`
 
+## Versioning
+    chmod +x release.sh        # one time
+    ./release.sh 0.1.2         # or any new X.Y.Z version
+
 ## License
 
 Licensed under the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0).
