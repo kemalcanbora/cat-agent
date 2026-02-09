@@ -90,5 +90,9 @@ readme = { file = "README.md", content-type = "text/markdown" }
     "utils/qwen.tiktoken",
     "tools/resource/*.ttf",
     "tools/resource/*.py",
+    "tools/resource/docker_runtime/*.py",
+    "tools/resource/docker_runtime/*.dockerfile",
+    "tools/resource/wasm_runtime/bin/python-3.11.1.wasm",
+    "tools/resource/python311.zip",
 ]
 
