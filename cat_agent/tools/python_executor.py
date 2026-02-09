@@ -233,11 +233,11 @@ class PythonExecutor(BaseTool):
                 except StopIteration:
                     break
                 except TimeoutError as error:
-                    logger.warning('PythonExecutor: execution timed out: %s', error)
+                    logger.warning('PythonExecutor: execution timed out: {}', error)
                     all_exec_results.append(('', 'Timeout Error'))
                     timeout_cnt += 1
                 except Exception as error:
-                    logger.error('PythonExecutor: unexpected error during execution: %s', error, exc_info=True)
+                    logger.opt(exception=True).error('PythonExecutor: unexpected error during execution: {}', error)
                     all_exec_results.append(('', f'Execution Error: {error}'))
                 if progress_bar is not None:
                     progress_bar.update(1)
@@ -246,7 +246,7 @@ class PythonExecutor(BaseTool):
                 progress_bar.close()
 
         if timeout_cnt:
-            logger.info('PythonExecutor: %d/%d executions timed out', timeout_cnt, len(batch_code))
+            logger.info('PythonExecutor: {}/{} executions timed out', timeout_cnt, len(batch_code))
 
         batch_results = []
         for code, (res, report) in zip(batch_code, all_exec_results):
