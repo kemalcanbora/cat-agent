@@ -1,17 +1,3 @@
-# Copyright 2023 The Qwen team, Alibaba Group. All rights reserved.
-# 
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-# 
-#    http://www.apache.org/licenses/LICENSE-2.0
-# 
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 import json
 from importlib import import_module
 from typing import Dict, Iterator, List, Optional, Union
@@ -61,7 +47,7 @@ class Memory(Agent):
         # when running retrieval:
         #   rebuild_rag = True  -> always rebuild indexes from current docs
         #   rebuild_rag = False -> reuse existing indexes if present
-        #   omitted / None      -> backend-specific default (currently rebuild)
+        #   omitted / None      -> auto-detect (rebuild only when index is missing)
         self.rebuild_rag: Optional[bool] = self.cfg.get('rebuild_rag', None)
         # Optional flag to toggle LEANN-based search per run.
         #   enable_leann = True  -> ensure 'leann_search' is in rag_searchers

@@ -27,6 +27,10 @@
 - **Multiple LLM backends** — OpenAI-compatible APIs, LlamaCpp (+ vision), OpenVINO, Transformers
 - **Structured logging** — Loguru-powered logging with coloured console, JSON, and file rotation support
 
+## Requirements
+
+- **Python 3.10+** (use `python3.10` or later to run examples and tests)
+
 ## Installation
 
 ```bash
@@ -157,6 +161,19 @@ messages = [Message(role=USER, content="How much storage does LEANN save?")]
 responses = mem.run_nonstream(messages, force_search=True)
 print(responses[-1].content)
 ```
+
+### Kubernetes agent (LEANN RAG)
+
+Kubernetes Q&A agent using LEANN over the [Kubernetes Q&A dataset](https://huggingface.co/datasets/kcanbora/kubernetes-q-a):
+
+```bash
+  pip install "cat-agent[rag]"
+  pip install datasets
+  python examples/kubernetes_agent/build_kubernetes_qa_corpus.py   # once
+  python examples/kubernetes_agent/kubernetes_agent_example.py
+```
+
+See `examples/kubernetes_agent/README.md` for details.
 
 ### WASM code interpreter
 

@@ -84,11 +84,24 @@ class Transformers(BaseFnCallModel):
 
     def _get_inputs(self, messages: List[Message]):
         import torch
-        
+
         messages_plain = [message.model_dump() for message in messages]
         if not self.support_multimodal_input:
-            input_ids = self.tokenizer.apply_chat_template(messages_plain, add_generation_prompt=True, return_tensors='pt')
-            inputs = dict(input_ids=input_ids, attention_mask=torch.ones_like(input_ids))
+            # For text-only models, apply_chat_template returns a BatchEncoding
+            # when return_tensors='pt'. We must extract the underlying tensor.
+            encodings = self.tokenizer.apply_chat_template(
+                messages_plain,
+                add_generation_prompt=True,
+                return_tensors='pt',
+            )
+            if hasattr(encodings, "input_ids"):
+                input_ids = encodings.input_ids
+            else:
+                input_ids = encodings
+            inputs = dict(
+                input_ids=input_ids,
+                attention_mask=torch.ones_like(input_ids),
+            )
         else:
             for message in messages_plain:
                 for content_item in message['content']:
