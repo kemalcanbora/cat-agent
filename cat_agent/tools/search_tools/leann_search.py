@@ -17,9 +17,10 @@ class LeannSearch(BaseSearch):
     def __init__(self, cfg: Optional[Dict] = None):
         super().__init__(cfg)
         self.rebuild_rag: Optional[bool] = None
+        self.leann_top_k: int = 100
         if cfg is not None:
             self.rebuild_rag = cfg.get('rebuild_rag', None)
-            self.leann_top_k = cfg.get('leann_top_k', 100)
+            self.leann_top_k = cfg.get('leann_top_k', self.leann_top_k)
 
     def sort_by_scores(self, query: str, docs: List[Record], **kwargs) -> List[Tuple[str, int, float]]:
         try:
