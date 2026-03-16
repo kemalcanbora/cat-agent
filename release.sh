@@ -36,7 +36,16 @@ fi
 
 echo "Bumping version to ${NEW_VERSION} in cat_agent/__init__.py"
 
-python - <<PY
+PYTHON_BIN="${PYTHON_BIN:-python3.10}"
+if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
+  PYTHON_BIN="python3"
+fi
+if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
+  echo "Error: Python interpreter not found. Install Python 3.10+ (or set PYTHON_BIN)." >&2
+  exit 1
+fi
+
+"${PYTHON_BIN}" - <<PY
 from pathlib import Path
 import re
 
