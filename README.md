@@ -24,7 +24,7 @@
 - **RAG** — Retrieval-augmented generation with vector, keyword, and hybrid search
 - **Code interpreter** — Safe Python execution via Docker or WASM sandbox (no Docker required)
 - **Rich tool set** — Web search, doc parsing, image generation, MCP, storage, and extensible custom tools
-- **Multiple LLM backends** — OpenAI-compatible APIs, LlamaCpp (+ vision), OpenVINO, Transformers
+- **Multiple LLM backends** — OpenAI-compatible APIs, LlamaCpp (+ vision), OpenVINO, Transformers, MLX-LM (Apple silicon)
 - **Structured logging** — Loguru-powered logging with coloured console, JSON, and file rotation support
 
 ## Requirements
@@ -99,6 +99,14 @@ Same concept using the HuggingFace Transformers backend (Qwen3-1.7B):
 
 ```bash
   python examples/transformers_math_guy/math_guy.py
+```
+
+### Math tool with MLX-LM (Apple silicon)
+
+Same concept using the MLX-LM backend (requires `mlx-lm==0.31.1`):
+
+```bash
+  python examples/mlx_lm_math_guy/math_guy.py
 ```
 
 ### Vision with LlamaCpp
@@ -202,6 +210,7 @@ Demonstrates coloured console logs, JSON output, and file logging alongside an a
 | LlamaCpp | `llama_cpp` | Local GGUF models via llama-cpp-python |
 | LlamaCpp Vision | `llama_cpp_vision` | Multimodal GGUF models (Qwen2-VL, LLaVA, etc.) |
 | Transformers | `transformers` | HuggingFace Transformers models |
+| MLX-LM | `mlx_lm` | Apple silicon local models via mlx-lm |
 | OpenVINO | `openvino` | Optimised inference on Intel hardware |
 
 ```python

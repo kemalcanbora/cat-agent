@@ -35,7 +35,7 @@ class SumNumbers(BaseTool):
 
 def main():
     llm_cfg = {
-        'model': 'Qwen/Qwen3-1.7B',
+        'model': 'Qwen/Qwen3.5-0.8B',
         'model_type': 'transformers',
         'device': 'cuda:0' if torch.cuda.is_available() else 'mps',
         'generate_cfg': {

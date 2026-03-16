@@ -24,7 +24,8 @@ dependencies = [
     "tiktoken",
     "pillow",
     "dotenv",
-    "llama-cpp-python==0.3.16",
+    "llama-cpp-python>=0.3.16",
+    "mlx-lm==0.31.1",
     "wasmtime==41.0.0",
     "loguru==0.7.3"
 ]

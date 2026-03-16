@@ -6,6 +6,7 @@ from .openvino import OpenVINO
 from .transformers_llm import Transformers
 from .llama_cpp import LlamaCpp
 from .llama_cpp_vision import LlamaCppVision
+from .mlx_lm_llm import MLXLm
 
 
 def get_chat_model(cfg: Union[dict, str] = 'qwen-plus') -> BaseChatModel:
@@ -28,6 +29,7 @@ __all__ = [
     'TextChatAtOAI',
     'OpenVINO',
     'Transformers',
+    'MLXLm',
     'get_chat_model',
     'ModelServiceError',
     'LlamaCpp',
