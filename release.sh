@@ -49,11 +49,12 @@ fi
 from pathlib import Path
 import re
 
+new_version = "${NEW_VERSION}"
 path = Path("cat_agent/__init__.py")
 text = path.read_text(encoding="utf-8")
 new_text, count = re.subn(
     r'__version__\s*=\s*["\'][^"\']*["\']',
-    f'__version__ = "{NEW_VERSION}"',
+    f'__version__ = "{new_version}"',
     text,
     count=1,
 )
