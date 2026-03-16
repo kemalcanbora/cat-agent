@@ -1,19 +1,21 @@
 import copy
 from typing import Dict, Iterator, List, Optional, Union
 
-from cat_agent.llm.base import register_llm
+from cat_agent.llm.base import ModelServiceError, register_llm
 from cat_agent.llm.function_calling import BaseFnCallModel
 from cat_agent.llm.schema import ASSISTANT, Message
 from cat_agent.log import logger
 
-# Note: this is an optional dependency; import error is raised with a helpful message.
-try:
+# Note: this is an optional dependency; we *do not* hard-fail at import time
+# so that users/CI can run without installing MLX. We only error when someone
+# actually tries to instantiate the MLXLm backend.
+try:  # pragma: no cover - optional dependency path
     from mlx_lm import generate, load, stream_generate
-except ImportError as e:
-    raise ImportError(
-        "mlx-lm is required to use the mlx_lm backend.\n"
-        "Install it with: pip install mlx-lm==0.31.1"
-    ) from e
+    from mlx_lm.sample_utils import make_sampler
+    _HAS_MLX_LM = True
+except Exception:  # ImportError or runtime errors if MLX bindings are missing
+    generate = load = stream_generate = make_sampler = None  # type: ignore
+    _HAS_MLX_LM = False
 
 
 @register_llm("mlx_lm")
@@ -37,6 +39,17 @@ class MLXLm(BaseFnCallModel):
     def __init__(self, cfg: Optional[Dict] = None):
         cfg = cfg or {}
         super().__init__(cfg)
+
+        if not _HAS_MLX_LM:
+            # Match other backends: raise when the backend is *used*, not imported.
+            raise ModelServiceError(
+                code="MissingDependency",
+                message=(
+                    "mlx-lm backend requested but `mlx-lm` (and its MLX dependencies) "
+                    "are not installed.\n"
+                    "Install it with: pip install mlx-lm==0.31.1"
+                ),
+            )
 
         model_id = cfg.get("model") or cfg.get("model_id")
         if not model_id:
@@ -107,8 +120,6 @@ class MLXLm(BaseFnCallModel):
         # mlx-lm (>=0.31.x) uses a `sampler` callable instead of passing temp/top_p directly.
         # Only create a sampler if the user provided sampling params.
         if (temperature is not None) or (top_p is not None) or ("top_k" in cfg) or ("min_p" in cfg):
-            from mlx_lm.sample_utils import make_sampler
-
             sampler_kwargs = {
                 "top_k": cfg.pop("top_k", None),
                 "xtc_probability": cfg.pop("xtc_probability", None),
