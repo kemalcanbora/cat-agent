@@ -1,4 +1,4 @@
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 from .agent import Agent
 from .multi_agent_hub import MultiAgentHub
 
