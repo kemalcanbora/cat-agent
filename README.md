@@ -20,13 +20,14 @@
 ### Features
 
 - **Agent workflows** — `Agent`, `Assistant`, `ReActChat`, `FnCallAgent`, `DocQAAgent`, `GroupChat`, `Router`, and more
+- **Graph workflows (DAG)** — Compose agents and tools into branching/looping graphs with `StateGraph`; a compiled graph is itself an `Agent`
 - **Function calling** — Native tool/function support for LLMs
 - **RAG** — Retrieval-augmented generation with vector, keyword, and hybrid search
 - **Code interpreter** — Safe Python execution via Docker or WASM sandbox (no Docker required)
 - **Rich tool set** — Web search, doc parsing, image generation, MCP, storage, and extensible custom tools
 - **Multiple LLM backends** — OpenAI-compatible APIs, LlamaCpp (+ vision), OpenVINO, Transformers, MLX-LM (Apple silicon)
 - **Structured logging** — Loguru-powered logging with coloured console, JSON, and file rotation support
-- **Observability hooks** — Structured run/LLM/tool events with pluggable handlers (callbacks, print, loguru)
+- **Observability hooks** — Structured run/node/LLM/tool events with pluggable handlers (callbacks, print, loguru, Mermaid, OpenTelemetry)
 
 ## Requirements
 
@@ -45,6 +46,7 @@
   pip install cat-agent[mcp]              # MCP (Model Context Protocol)
   pip install cat-agent[python_executor]  # Python executor (math, sympy, etc.)
   pip install cat-agent[code_interpreter] # Code interpreter server (Jupyter, FastAPI)
+  pip install cat-agent[otel]             # OpenTelemetry export for graph/agent traces
 ```
 
 ## Logging
@@ -84,9 +86,67 @@ logger.debug("Processing query: {}", query)
 | `CAT_AGENT_LOG_FILE` | file path | *(none)* |
 | `CAT_AGENT_LOG_FORMAT` | `pretty`, `json` | `pretty` |
 
+## Graph Workflows (DAG)
+
+Compose agents and tools into a graph of nodes and edges instead of a fixed loop. Build a `StateGraph`, wire nodes with static or conditional edges (loops allowed, bounded by `max_steps`), then `compile()` it. The compiled `GraphAgent` **is an `Agent`**, so it streams, emits observability events, and composes with `Router`/`GroupChat`.
+
+```python
+from cat_agent.agents import Assistant
+from cat_agent.graph import StateGraph, AgentNode, FunctionNode, GraphState, END
+
+math_guy = Assistant(llm=llm_cfg, name="math_guy", function_list=["sum_numbers"])
+chat = Assistant(llm=llm_cfg, name="chat")
+
+def classify(state: GraphState) -> GraphState:
+    text = state.last_message.content or ""
+    state.scratch["is_math"] = any(c.isdigit() for c in text)
+    return state
+
+app = (
+    StateGraph()
+    .add_node(FunctionNode("classify", classify))
+    .add_node(AgentNode("math_guy", math_guy))
+    .add_node(AgentNode("chat", chat))
+    .set_entry("classify")
+    .add_conditional_edges("classify", lambda s: "math_guy" if s.scratch["is_math"] else "chat")
+    .add_edge("math_guy", END)
+    .add_edge("chat", END)
+    .compile(name="MathGuyGraph")
+)
+
+for chunk in app.run([{"role": "user", "content": "What is 1+2+3+4+5?"}]):
+    print(chunk[-1]["content"])
+```
+
+**Node types:** `AgentNode` (wrap any agent or sub-graph), `FunctionNode` (arbitrary Python / routing flags), `ToolNode` (invoke a registered tool).
+
+### Visualizing the DAG
+
+The graph engine emits `node.start` / `node.end` events (each `node.end` records the `next` edge taken). Two handlers turn them into a diagram:
+
+```python
+from cat_agent.observability import MermaidExporter, OpenTelemetryHandler
+
+# 1) Mermaid diagram (dependency-free) — writes graph_dag.mmd on run.end
+exporter = MermaidExporter(path="graph_dag.mmd")
+app = graph.compile(name="MathGuyGraph", handlers=[exporter])
+# ... after a run: print(exporter.to_mermaid()) or paste the .mmd into https://mermaid.live
+
+# 2) OpenTelemetry spans (pip install cat-agent[otel]) — view in Jaeger, Tempo,
+#    or as an agent graph in Arize Phoenix. Configure your OTel exporter, then:
+app = graph.compile(name="MathGuyGraph", handlers=[OpenTelemetryHandler()])
+```
+
+### Example
+
+```bash
+  python examples/graph/math_guy.py            # run the graph
+  GRAPH_TRACE=1 python examples/graph/math_guy.py  # + print node trace and write graph_dag.mmd
+```
+
 ## Observability
 
-Cat-Agent emits structured events for agent runs, LLM calls, and tool execution. Handlers are **opt-in** — when none are registered, behavior and performance are unchanged.
+Cat-Agent emits structured events for agent runs, graph nodes, LLM calls, and tool execution. Handlers are **opt-in** — when none are registered, behavior and performance are unchanged.
 
 ### Quick start
 
@@ -122,6 +182,7 @@ CAT_AGENT_TRACE_LEVEL=DEBUG python my_script.py
 | Event | When |
 |---|---|
 | `run.start` / `run.end` / `run.error` | Agent `run()` lifecycle |
+| `node.start` / `node.end` | Each graph node (`node.end` records the `next` edge) |
 | `llm.start` / `llm.end` / `llm.chunk` | Each LLM call (chunks optional) |
 | `tool.start` / `tool.end` / `tool.error` | Each tool invocation |
 
@@ -189,6 +250,15 @@ Intelligently route queries to specialised agents (MathExpert vs GeneralAssistan
 
 ```bash
   python examples/multi_agent/router_example.py
+```
+
+### Graph workflow (DAG)
+
+Route between a math agent and a general chat agent via a `StateGraph`, with optional node tracing and a Mermaid diagram:
+
+```bash
+  python examples/graph/math_guy.py
+  GRAPH_TRACE=1 python examples/graph/math_guy.py   # print node trace + write graph_dag.mmd
 ```
 
 ### RAG with LEANN retriever
@@ -279,11 +349,12 @@ bot = Assistant(
 |---|---|
 | `cat_agent.agent` | Base `Agent` class |
 | `cat_agent.agents` | Assistant, ReActChat, FnCallAgent, DocQA, GroupChat, Router |
+| `cat_agent.graph` | `StateGraph` / `GraphAgent` DAG engine with Agent/Function/Tool nodes |
 | `cat_agent.llm` | Chat model backends (OAI, LlamaCpp, LlamaCpp Vision, OpenVINO, Transformers) |
 | `cat_agent.tools` | CodeInterpreter, WASMCodeInterpreter, Retrieval, DocParser, Storage, MCP, and more |
 | `cat_agent.memory` | Memory, RAG, and context utilities |
 | `cat_agent.log` | Loguru-based structured logging |
-| `cat_agent.observability` | Run/LLM/tool event hooks and handlers |
+| `cat_agent.observability` | Run/node/LLM/tool event hooks and handlers (incl. Mermaid, OpenTelemetry) |
 | `cat_agent.settings` | Configuration via environment variables |
 
 ## Testing
