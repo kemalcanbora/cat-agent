@@ -86,6 +86,7 @@ class TestOpenTelemetryHandler:
         return provider, exporter
 
     def test_emits_nested_spans(self):
+        pytest.importorskip("opentelemetry.sdk")
         provider, exporter = self._provider_with_memory_exporter()
         tracer = provider.get_tracer("test")
         app = _branch_graph([OpenTelemetryHandler(tracer=tracer)])
