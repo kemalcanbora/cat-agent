@@ -7,7 +7,14 @@ import os
 from cat_agent.observability.context import RedactConfig, RunContext, run_context
 from cat_agent.observability.emitter import clear_handlers, emit, register_handler, resolve_handlers
 from cat_agent.observability.events import AgentEvent, EventEnvelope
-from cat_agent.observability.handlers import BaseHandler, CallbackHandler, LoggingHandler, PrintHandler
+from cat_agent.observability.handlers import (
+    BaseHandler,
+    CallbackHandler,
+    LoggingHandler,
+    MermaidExporter,
+    OpenTelemetryHandler,
+    PrintHandler,
+)
 
 __all__ = [
     'AgentEvent',
@@ -15,6 +22,8 @@ __all__ = [
     'CallbackHandler',
     'EventEnvelope',
     'LoggingHandler',
+    'MermaidExporter',
+    'OpenTelemetryHandler',
     'PrintHandler',
     'RedactConfig',
     'RunContext',

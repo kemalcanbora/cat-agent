@@ -291,3 +291,61 @@ class AgentEvent:
                 'error_message': error_message,
             },
         )
+
+    @staticmethod
+    def node_start(
+        *,
+        trace_id: str,
+        run_id: str,
+        span_id: str,
+        parent_span_id: Optional[str],
+        agent_name: Optional[str],
+        agent_class: str,
+        node: str,
+        node_type: str,
+        step: int,
+    ) -> EventEnvelope:
+        return EventEnvelope(
+            event_type='node.start',
+            timestamp=_utc_timestamp(),
+            trace_id=trace_id,
+            run_id=run_id,
+            span_id=span_id,
+            parent_span_id=parent_span_id,
+            agent_name=agent_name,
+            agent_class=agent_class,
+            payload={'node': node, 'node_type': node_type, 'step': step},
+        )
+
+    @staticmethod
+    def node_end(
+        *,
+        trace_id: str,
+        run_id: str,
+        span_id: str,
+        parent_span_id: Optional[str],
+        agent_name: Optional[str],
+        agent_class: str,
+        node: str,
+        node_type: str,
+        step: int,
+        duration_ms: float,
+        next_node: str,
+    ) -> EventEnvelope:
+        return EventEnvelope(
+            event_type='node.end',
+            timestamp=_utc_timestamp(),
+            trace_id=trace_id,
+            run_id=run_id,
+            span_id=span_id,
+            parent_span_id=parent_span_id,
+            agent_name=agent_name,
+            agent_class=agent_class,
+            payload={
+                'node': node,
+                'node_type': node_type,
+                'step': step,
+                'duration_ms': duration_ms,
+                'next': next_node,
+            },
+        )

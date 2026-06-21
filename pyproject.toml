@@ -49,6 +49,11 @@ rag = [
     "leann==0.3.6",
 ]
 mcp = ["mcp"]
+otel = [
+    "opentelemetry-api",
+    "opentelemetry-sdk",
+    "opentelemetry-exporter-otlp",
+]
 python_executor = [
     "pebble",
     "multiprocess",

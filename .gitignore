@@ -50,3 +50,6 @@ workspace/
 *.log
 .env
 .env.local
+
+# Generated graph DAG diagrams from examples
+*.mmd
