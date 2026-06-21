@@ -34,6 +34,7 @@ class FnCallAgent(Agent):
                  name: Optional[str] = None,
                  description: Optional[str] = None,
                  files: Optional[List[str]] = None,
+                 handlers: Optional[List] = None,
                  **kwargs):
         """Initialization the agent.
 
@@ -46,12 +47,16 @@ class FnCallAgent(Agent):
             name: The name of this agent.
             description: The description of this agent, which will be used for multi_agent.
             files: A file url list. The initialized files for the agent.
+            handlers: Optional observability handlers for run, LLM, and tool events.
         """
+        if handlers is None:
+            handlers = kwargs.pop('handlers', None)
         super().__init__(function_list=function_list,
                          llm=llm,
                          system_message=system_message,
                          name=name,
-                         description=description)
+                         description=description,
+                         handlers=handlers)
 
         if not hasattr(self, 'mem'):
             # Default to use Memory to manage files

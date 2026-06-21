@@ -185,6 +185,7 @@ class TextChatAtOAI(BaseFnCallModel):
         messages = [msg.model_dump() for msg in messages]
         messages = self._conv_cat_agent_messages_to_oai(messages)
 
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f'LLM Input: \n{pformat(messages, indent=2)}')
+        # `cat_agent.log.logger` is Loguru; use lazy logging to avoid
+        # expensive formatting when DEBUG is disabled.
+        logger.opt(lazy=True).debug("LLM Input:\n{}", lambda: pformat(messages, indent=2))
         return messages

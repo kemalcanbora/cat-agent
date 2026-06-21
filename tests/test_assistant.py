@@ -79,6 +79,20 @@ class TestAssistant:
 
         assert issubclass(Assistant, Agent)
 
+    def test_assistant_accepts_handlers(self):
+        from cat_agent.agents.assistant import Assistant
+        from cat_agent.observability.events import EventEnvelope
+
+        class CollectingHandler:
+            def on_event(self, event: EventEnvelope) -> None:
+                pass
+
+        mock_llm = MagicMock()
+        mock_llm.model = 'gpt-4'
+        with patch('cat_agent.agents.fncall_agent.Memory', return_value=MagicMock()):
+            asst = Assistant(llm=mock_llm, handlers=[CollectingHandler()])
+        assert asst._handlers
+
     def test_prepend_knowledge_with_explicit_knowledge(self):
         from cat_agent.agents.assistant import Assistant
 

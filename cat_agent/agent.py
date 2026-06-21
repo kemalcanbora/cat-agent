@@ -14,18 +14,32 @@
 
 import copy
 import json
+import time
 import traceback
 from abc import ABC, abstractmethod
-from typing import Dict, Iterator, List, Optional, Tuple, Union
+from typing import Dict, Iterator, List, Optional, Tuple, TYPE_CHECKING, Union
 
 from cat_agent.llm import get_chat_model
 from cat_agent.llm.base import BaseChatModel
 from cat_agent.llm.schema import CONTENT, DEFAULT_SYSTEM_MESSAGE, ROLE, SYSTEM, ContentItem, Message
 from cat_agent.log import logger
+from cat_agent.observability.context import child_span, get_run_context, run_context
+from cat_agent.observability.emitter import emit, resolve_handlers
+from cat_agent.observability.events import AgentEvent
+from cat_agent.observability.helpers import (
+    agent_model_name,
+    extract_usage,
+    format_tool_args,
+    messages_have_tool_call,
+    result_char_count,
+)
 from cat_agent.tools import TOOL_REGISTRY, BaseTool, MCPManager
 from cat_agent.tools.base import ToolServiceError
 from cat_agent.tools.simple_doc_parser import DocParserError
 from cat_agent.utils.utils import has_chinese_messages, merge_generate_cfgs
+
+if TYPE_CHECKING:
+    from cat_agent.observability.handlers.base import BaseHandler
 
 
 class Agent(ABC):
@@ -41,6 +55,7 @@ class Agent(ABC):
                  system_message: Optional[str] = DEFAULT_SYSTEM_MESSAGE,
                  name: Optional[str] = None,
                  description: Optional[str] = None,
+                 handlers: Optional[List['BaseHandler']] = None,
                  **kwargs):
         """Initialization the agent.
 
@@ -52,7 +67,10 @@ class Agent(ABC):
             system_message: The specified system message for LLM chat.
             name: The name of this agent.
             description: The description of this agent, which will be used for multi_agent.
+            handlers: Optional observability handlers for run, LLM, and tool events.
         """
+        if handlers is None:
+            handlers = kwargs.pop('handlers', None)
         if isinstance(llm, dict):
             self.llm = get_chat_model(llm)
         else:
@@ -67,6 +85,7 @@ class Agent(ABC):
         self.system_message = system_message
         self.name = name
         self.description = description
+        self._handlers = handlers or []
 
     def run_nonstream(self, messages: List[Union[Dict, Message]], **kwargs) -> Union[List[Message], List[Dict]]:
         """Same as self.run, but with stream=False,
@@ -121,11 +140,88 @@ class Agent(ABC):
                     new_messages[0][CONTENT] = [ContentItem(text=self.system_message + '\n\n')
                                                ] + new_messages[0][CONTENT]  # noqa
 
-        for rsp in self._run(messages=new_messages, **kwargs):
+        handlers = resolve_handlers(self._handlers, kwargs.get('handlers'))
+        emit_stream_chunks = bool(kwargs.get('emit_stream_chunks'))
+        if handlers:
+            with run_context(
+                agent_name=self.name,
+                agent_class=type(self).__name__,
+                handlers=handlers,
+                trace_id=kwargs.get('trace_id'),
+                emit_stream_chunks=emit_stream_chunks,
+            ) as ctx:
+                yield from self._run_with_observability(
+                    new_messages=new_messages,
+                    return_message_type=_return_message_type,
+                    lang=kwargs.get('lang', 'en'),
+                    run_kwargs=kwargs,
+                    ctx=ctx,
+                )
+        else:
+            yield from self._yield_run_responses(
+                self._run(messages=new_messages, **kwargs),
+                _return_message_type,
+            )
+
+    def _run_with_observability(
+        self,
+        *,
+        new_messages: List[Message],
+        return_message_type: str,
+        lang: str,
+        run_kwargs: dict,
+        ctx,
+    ) -> Iterator[List[Union[Message, Dict]]]:
+        started_at = time.monotonic()
+        yield_count = 0
+        emit(AgentEvent.run_start(
+            trace_id=ctx.trace_id,
+            run_id=ctx.run_id,
+            span_id=ctx.span_id,
+            parent_span_id=ctx.parent_span_id,
+            agent_name=ctx.agent_name,
+            agent_class=ctx.agent_class,
+            message_count=len(new_messages),
+            lang=lang,
+        ))
+        try:
+            for rsp in self._yield_run_responses(self._run(messages=new_messages, **run_kwargs), return_message_type):
+                yield_count += 1
+                yield rsp
+            emit(AgentEvent.run_end(
+                trace_id=ctx.trace_id,
+                run_id=ctx.run_id,
+                span_id=ctx.span_id,
+                parent_span_id=ctx.parent_span_id,
+                agent_name=ctx.agent_name,
+                agent_class=ctx.agent_class,
+                duration_ms=(time.monotonic() - started_at) * 1000,
+                yield_count=yield_count,
+            ))
+        except Exception as ex:
+            emit(AgentEvent.run_error(
+                trace_id=ctx.trace_id,
+                run_id=ctx.run_id,
+                span_id=ctx.span_id,
+                parent_span_id=ctx.parent_span_id,
+                agent_name=ctx.agent_name,
+                agent_class=ctx.agent_class,
+                duration_ms=(time.monotonic() - started_at) * 1000,
+                error_type=type(ex).__name__,
+                error_message=str(ex),
+            ))
+            raise
+
+    def _yield_run_responses(
+        self,
+        response_iter: Iterator[List[Message]],
+        return_message_type: str,
+    ) -> Iterator[List[Union[Message, Dict]]]:
+        for rsp in response_iter:
             for i in range(len(rsp)):
                 if not rsp[i].name and self.name:
                     rsp[i].name = self.name
-            if _return_message_type == 'message':
+            if return_message_type == 'message':
                 yield [Message(**x) if isinstance(x, dict) else x for x in rsp]
             else:
                 yield [x.model_dump() if not isinstance(x, dict) else x for x in rsp]
@@ -167,13 +263,73 @@ class Agent(ABC):
         Yields:
             The response generator of LLM.
         """
-        return self.llm.chat(messages=messages,
-                             functions=functions,
-                             stream=stream,
-                             extra_generate_cfg=merge_generate_cfgs(
-                                 base_generate_cfg=self.extra_generate_cfg,
-                                 new_generate_cfg=extra_generate_cfg,
-                             ))
+        ctx = get_run_context()
+        if ctx is None or not ctx.handlers:
+            yield from self.llm.chat(
+                messages=messages,
+                functions=functions,
+                stream=stream,
+                extra_generate_cfg=merge_generate_cfgs(
+                    base_generate_cfg=self.extra_generate_cfg,
+                    new_generate_cfg=extra_generate_cfg,
+                ),
+            )
+            return
+
+        model = agent_model_name(self.llm)
+        tool_count = len(functions or [])
+        with child_span() as span_id:
+            emit(AgentEvent.llm_start(
+                trace_id=ctx.trace_id,
+                run_id=ctx.run_id,
+                span_id=span_id,
+                parent_span_id=ctx.parent_span_id,
+                agent_name=ctx.agent_name,
+                agent_class=ctx.agent_class,
+                model=model,
+                message_count=len(messages),
+                tool_count=tool_count,
+            ))
+            started_at = time.monotonic()
+            chunk_count = 0
+            final_output: List[Message] = []
+            for output in self.llm.chat(
+                messages=messages,
+                functions=functions,
+                stream=stream,
+                extra_generate_cfg=merge_generate_cfgs(
+                    base_generate_cfg=self.extra_generate_cfg,
+                    new_generate_cfg=extra_generate_cfg,
+                ),
+            ):
+                chunk_count += 1
+                if output:
+                    final_output = output
+                if ctx.emit_stream_chunks:
+                    emit(AgentEvent.llm_chunk(
+                        trace_id=ctx.trace_id,
+                        run_id=ctx.run_id,
+                        span_id=span_id,
+                        parent_span_id=ctx.parent_span_id,
+                        agent_name=ctx.agent_name,
+                        agent_class=ctx.agent_class,
+                        chunk_index=chunk_count,
+                        message_count=len(output or []),
+                    ))
+                yield output
+            emit(AgentEvent.llm_end(
+                trace_id=ctx.trace_id,
+                run_id=ctx.run_id,
+                span_id=span_id,
+                parent_span_id=ctx.parent_span_id,
+                agent_name=ctx.agent_name,
+                agent_class=ctx.agent_class,
+                duration_ms=(time.monotonic() - started_at) * 1000,
+                model=model,
+                has_tool_call=messages_have_tool_call(final_output),
+                usage=extract_usage(final_output),
+                chunk_count=chunk_count,
+            ))
 
     def _call_tool(self, tool_name: str, tool_args: Union[str, dict] = '{}', **kwargs) -> Union[str, List[ContentItem]]:
         """The interface of calling tools for the agent.
@@ -185,6 +341,61 @@ class Agent(ABC):
         Returns:
             The output of tools.
         """
+        ctx = get_run_context()
+        if ctx is None or not ctx.handlers:
+            return self._execute_tool(tool_name, tool_args, **kwargs)
+
+        with child_span() as span_id:
+            emit(AgentEvent.tool_start(
+                trace_id=ctx.trace_id,
+                run_id=ctx.run_id,
+                span_id=span_id,
+                parent_span_id=ctx.parent_span_id,
+                agent_name=ctx.agent_name,
+                agent_class=ctx.agent_class,
+                tool_name=tool_name,
+                tool_args=format_tool_args(tool_args, ctx),
+            ))
+            started_at = time.monotonic()
+            try:
+                tool_result = self._execute_tool(tool_name, tool_args, **kwargs)
+            except (ToolServiceError, DocParserError) as ex:
+                emit(AgentEvent.tool_error(
+                    trace_id=ctx.trace_id,
+                    run_id=ctx.run_id,
+                    span_id=span_id,
+                    parent_span_id=ctx.parent_span_id,
+                    agent_name=ctx.agent_name,
+                    agent_class=ctx.agent_class,
+                    tool_name=tool_name,
+                    duration_ms=(time.monotonic() - started_at) * 1000,
+                    error_type=type(ex).__name__,
+                    error_message=str(ex),
+                ))
+                raise
+            success = not (isinstance(tool_result, str) and tool_result.startswith('Tool ') and 'does not exists' in tool_result)
+            if isinstance(tool_result, str) and tool_result.startswith('An error occurred when calling tool'):
+                success = False
+            emit(AgentEvent.tool_end(
+                trace_id=ctx.trace_id,
+                run_id=ctx.run_id,
+                span_id=span_id,
+                parent_span_id=ctx.parent_span_id,
+                agent_name=ctx.agent_name,
+                agent_class=ctx.agent_class,
+                tool_name=tool_name,
+                duration_ms=(time.monotonic() - started_at) * 1000,
+                success=success,
+                result_chars=result_char_count(tool_result, ctx),
+            ))
+            return tool_result
+
+    def _execute_tool(
+        self,
+        tool_name: str,
+        tool_args: Union[str, dict],
+        **kwargs,
+    ) -> Union[str, List[ContentItem]]:
         if tool_name not in self.function_map:
             return f'Tool {tool_name} does not exists.'
         tool = self.function_map[tool_name]

@@ -88,14 +88,16 @@ class Assistant(FnCallAgent):
                  name: Optional[str] = None,
                  description: Optional[str] = None,
                  files: Optional[List[str]] = None,
-                 rag_cfg: Optional[Dict] = None):
+                 rag_cfg: Optional[Dict] = None,
+                 handlers: Optional[List] = None):
         super().__init__(function_list=function_list,
                          llm=llm,
                          system_message=system_message,
                          name=name,
                          description=description,
                          files=files,
-                         rag_cfg=rag_cfg)
+                         rag_cfg=rag_cfg,
+                         handlers=handlers)
 
     def _run(self,
              messages: List[Message],

@@ -26,6 +26,7 @@
 - **Rich tool set** — Web search, doc parsing, image generation, MCP, storage, and extensible custom tools
 - **Multiple LLM backends** — OpenAI-compatible APIs, LlamaCpp (+ vision), OpenVINO, Transformers, MLX-LM (Apple silicon)
 - **Structured logging** — Loguru-powered logging with coloured console, JSON, and file rotation support
+- **Observability hooks** — Structured run/LLM/tool events with pluggable handlers (callbacks, print, loguru)
 
 ## Requirements
 
@@ -82,6 +83,55 @@ logger.debug("Processing query: {}", query)
 | `CAT_AGENT_LOG_LEVEL` | `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` | *(silent)* |
 | `CAT_AGENT_LOG_FILE` | file path | *(none)* |
 | `CAT_AGENT_LOG_FORMAT` | `pretty`, `json` | `pretty` |
+
+## Observability
+
+Cat-Agent emits structured events for agent runs, LLM calls, and tool execution. Handlers are **opt-in** — when none are registered, behavior and performance are unchanged.
+
+### Quick start
+
+```python
+from cat_agent.agents import Assistant
+from cat_agent.llm.schema import USER, Message
+from cat_agent.observability import CallbackHandler, PrintHandler
+
+# Option 1: callback (no manual event parsing — use event.summary())
+def on_event(event):
+    print(event.summary())
+
+bot = Assistant(llm=..., handlers=[CallbackHandler(on_event)])
+
+# Option 2: print directly
+bot = Assistant(llm=..., handlers=[PrintHandler()])
+
+list(bot.run([Message(role=USER, content="Hello")]))
+```
+
+### Environment variables
+
+```bash
+# Enable default loguru trace output
+CAT_AGENT_TRACE=1 python my_script.py
+
+# Optional trace log level (default: INFO)
+CAT_AGENT_TRACE_LEVEL=DEBUG python my_script.py
+```
+
+### Event types
+
+| Event | When |
+|---|---|
+| `run.start` / `run.end` / `run.error` | Agent `run()` lifecycle |
+| `llm.start` / `llm.end` / `llm.chunk` | Each LLM call (chunks optional) |
+| `tool.start` / `tool.end` / `tool.error` | Each tool invocation |
+
+Each event includes `trace_id`, `run_id`, `span_id`, agent name/class, and a typed `payload` dict. Use `event.to_dict()` for JSON export.
+
+### Example
+
+```bash
+  python examples/observability/observability_example.py
+```
 
 ## Examples
 
@@ -233,11 +283,12 @@ bot = Assistant(
 | `cat_agent.tools` | CodeInterpreter, WASMCodeInterpreter, Retrieval, DocParser, Storage, MCP, and more |
 | `cat_agent.memory` | Memory, RAG, and context utilities |
 | `cat_agent.log` | Loguru-based structured logging |
+| `cat_agent.observability` | Run/LLM/tool event hooks and handlers |
 | `cat_agent.settings` | Configuration via environment variables |
 
 ## Testing
 
-- **Test count:** 222+ tests across `tests/test_agent.py`, `tests/test_agents.py`, `tests/test_llm.py`, `tests/test_memory.py`, `tests/test_tools.py`, and `tests/test_utils.py`.
+- **Test count:** 230+ tests including observability coverage in `tests/test_observability.py`.
 - **Test coverage:** **59%** (6,038 lines total).
 - **Run tests:** `pytest` (install with `pip install -e ".[test]"`).
 - **Report coverage:** `pytest --cov=cat_agent --cov-report=term`
