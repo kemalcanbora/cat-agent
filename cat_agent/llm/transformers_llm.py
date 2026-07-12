@@ -21,6 +21,21 @@ from cat_agent.llm.schema import IMAGE, AUDIO, VIDEO
 from cat_agent.log import logger
 
 
+def _format_transformers_import_error(err: BaseException) -> str:
+    root = err
+    while root.__cause__ is not None:
+        root = root.__cause__
+    return (
+        'Could not import HuggingFace Transformers.\n'
+        f'Root cause: {type(root).__name__}: {root}\n'
+        'This usually means the active Python environment has incompatible packages '
+        '(often pyOpenSSL/cryptography breaking accelerate).\n'
+        'Try: pip install -U "cat-agent>=0.4.3"\n'
+        'Or use a fresh venv: python -m venv .venv && source .venv/bin/activate '
+        '&& pip install cat-agent'
+    )
+
+
 @register_llm('transformers')
 class Transformers(BaseFnCallModel):
     """
@@ -45,8 +60,7 @@ class Transformers(BaseFnCallModel):
             from transformers import AutoConfig, AutoProcessor
             from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
         except ImportError as e:
-            raise ImportError('Could not import classes from transformers. '
-                              'Please install it with `pip install -U transformers`') from e
+            raise ImportError(_format_transformers_import_error(e)) from e
         
         self.hf_config = AutoConfig.from_pretrained(cfg['model'])
         arch = self.hf_config.architectures[0]

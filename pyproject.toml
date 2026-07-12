@@ -28,6 +28,7 @@ dependencies = [
     "transformers>=4.51.0",
     "torch>=2.0",
     "accelerate>=1.4.0",
+    "pyopenssl>=26.0.0",
     "wasmtime==41.0.0",
     "loguru==0.7.3"
 ]
