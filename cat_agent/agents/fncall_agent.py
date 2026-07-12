@@ -10,7 +10,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import copy
 from typing import Dict, Iterator, List, Literal, Optional, Union
 
 from cat_agent import Agent
@@ -64,8 +63,19 @@ class FnCallAgent(Agent):
                 mem_llm = self.llm
             self.mem = Memory(llm=mem_llm, files=files, **kwargs)
 
+        self._function_schemas_cache: Optional[List[Dict]] = None
+
+    @property
+    def function_schemas(self) -> List[Dict]:
+        if self._function_schemas_cache is None:
+            self._function_schemas_cache = [func.function for func in self.function_map.values()]
+        return self._function_schemas_cache
+
+    def _init_tool(self, tool: Union[str, Dict, BaseTool]):
+        super()._init_tool(tool)
+        self._function_schemas_cache = None
+
     def _run(self, messages: List[Message], lang: Literal['en', 'zh'] = 'en', **kwargs) -> Iterator[List[Message]]:
-        messages = copy.deepcopy(messages)
         num_llm_calls_available = MAX_LLM_CALL_PER_RUN
         response = []
         while True and num_llm_calls_available > 0:
@@ -75,7 +85,7 @@ class FnCallAgent(Agent):
             if kwargs.get('seed') is not None:
                 extra_generate_cfg['seed'] = kwargs['seed']
             output_stream = self._call_llm(messages=messages,
-                                           functions=[func.function for func in self.function_map.values()],
+                                           functions=self.function_schemas,
                                            extra_generate_cfg=extra_generate_cfg)
             output: List[Message] = []
             for output in output_stream:

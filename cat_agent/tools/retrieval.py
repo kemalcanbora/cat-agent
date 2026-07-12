@@ -22,17 +22,14 @@ from cat_agent.tools.simple_doc_parser import PARSER_SUPPORTED_FILE_TYPES
 
 def _check_deps_for_rag():
     try:
+        import cat_agent._native  # noqa: F401
         import charset_normalizer  # noqa
-        import jieba  # noqa
-        import pdfminer  # noqa
-        import pdfplumber  # noqa
-        import snowballstemmer  # noqa
         from bs4 import BeautifulSoup  # noqa
         from docx import Document  # noqa
         from pptx import Presentation  # noqa
     except ImportError as e:
         raise ImportError('The dependencies for RAG support are not installed. '
-                          'Please install the required dependencies by running: pip install "qwen-agent[rag]"') from e
+                          'Please install the required dependencies by running: pip install "cat-agent[rag]"') from e
 
 
 @register_tool('retrieval')

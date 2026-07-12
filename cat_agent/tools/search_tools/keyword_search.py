@@ -1,9 +1,9 @@
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
-# 
+#
 #    http://www.apache.org/licenses/LICENSE-2.0
-# 
+#
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -12,8 +12,6 @@
 
 import json
 import os
-import re
-import string
 from collections import OrderedDict
 from hashlib import sha256
 from importlib import import_module
@@ -26,17 +24,22 @@ from cat_agent.settings import DEFAULT_MAX_REF_TOKEN, DEFAULT_WORKSPACE
 from cat_agent.tools.base import register_tool
 from cat_agent.tools.doc_parser import Record
 from cat_agent.tools.search_tools.base_search import BaseSearch
-from cat_agent.utils.utils import has_chinese_chars
+
+
+def _native():
+    try:
+        return import_module('cat_agent._native')
+    except ImportError as error:
+        raise ImportError(
+            'KeywordSearch requires the cat_agent native Rust extension. '
+            'Install a platform wheel or build it with: '
+            '`maturin develop --manifest-path native/Cargo.toml`'
+        ) from error
 
 
 @register_tool('keyword_search')
 class KeywordSearch(BaseSearch):
-    """BM25 retrieval with a bounded, corpus-keyed index cache.
-
-    Tokenization is intentionally kept in Python to preserve the existing
-    jieba/Snowball behavior. BM25 scoring and index storage are handled by the
-    required ``cat_agent._native`` Rust module.
-    """
+    """BM25 retrieval backed by the mandatory Rust index and tokenizer."""
 
     def __init__(self, cfg=None):
         super().__init__(cfg)
@@ -65,7 +68,6 @@ class KeywordSearch(BaseSearch):
         wordlist = parse_keyword(query)
         logger.debug('wordlist: ' + ','.join(wordlist))
         if not wordlist:
-            # This represents the queries that do not use retrieval: summarize, etc.
             return []
 
         cache_key = _corpus_fingerprint(docs)
@@ -92,19 +94,8 @@ class KeywordSearch(BaseSearch):
 
         return chunk_and_score
 
-    @staticmethod
-    def _native_index_type():
-        try:
-            return import_module('cat_agent._native').RagIndex
-        except ImportError as error:
-            raise ImportError(
-                'KeywordSearch requires the cat_agent native Rust extension. '
-                'Install a platform wheel or build it with: '
-                '`maturin develop --manifest-path native/Cargo.toml`'
-            ) from error
-
     def _load_or_build_index(self, tokenized_corpus, all_chunks, cache_key):
-        rag_index = self._native_index_type()
+        rag_index = _native().RagIndex
         metadata = self._load_metadata()
         can_reuse = (
             self.rebuild_rag is not True
@@ -175,103 +166,26 @@ def _corpus_fingerprint(docs: List[Record]) -> str:
     return digest.hexdigest()
 
 
-WORDS_TO_IGNORE = [
-    'i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', "you're", "you've", "you'll", "you'd", 'your',
-    'yours', 'yourself', 'yourselves', 'he', 'him', 'his', 'himself', 'she', "she's", 'her', 'hers', 'herself', 'it',
-    "it's", 'its', 'itself', 'they', 'them', 'their', 'theirs', 'themselves', 'what', 'which', 'who', 'whom', 'this',
-    'that', "that'll", 'these', 'those', 'am', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had',
-    'having', 'do', 'does', 'did', 'doing', 'a', 'an', 'the', 'and', 'but', 'if', 'or', 'because', 'as', 'until',
-    'while', 'of', 'at', 'by', 'for', 'with', 'about', 'against', 'between', 'into', 'through', 'during', 'before',
-    'after', 'above', 'below', 'to', 'from', 'up', 'down', 'in', 'out', 'on', 'off', 'over', 'under', 'again',
-    'further', 'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'any', 'both', 'each', 'few',
-    'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very',
-    's', 't', 'can', 'will', 'just', 'don', "don't", 'should', "should've", 'now', 'd', 'll', 'm', 'o', 're', 've', 'y',
-    'ain', 'aren', "aren't", 'couldn', "couldn't", 'didn', "didn't", 'doesn', "doesn't", 'hadn', "hadn't", 'hasn',
-    "hasn't", 'haven', "haven't", 'isn', "isn't", 'ma', 'mightn', "mightn't", 'mustn', "mustn't", 'needn', "needn't",
-    'shan', "shan't", 'shouldn', "shouldn't", 'wasn', "wasn't", 'weren', "weren't", 'won', "won't", 'wouldn',
-    "wouldn't", '', '\\t', '\\n', '\\\\', '\n', '\t', '\\', ' ', ',', ';', '/', '.', '-', '_', '(', ')', '[', ']', '{', '}', '?', '!',
-    "'", '"', ':', 'explained', 'describe', 'explain', 'summarize', 'summary', 'document', 'article',
-    'paper', 'manuscript', 'draft', 'thesis', 'PDF', 'pdf', 'this', 'that', 'me', 'help me', 'that', 'down', 'translate', 'tell', 'introduce'
-]
-
-ENGLISH_PUNCTUATIONS = string.punctuation.replace('%', '').replace('.', '').replace(
-    '@', '')  # English punctuations to remove. We're separately handling %, ., and @
-CHINESE_PUNCTUATIONS = '。？！，、；：“”‘’（）《》【】……—『』「」_'
-PUNCTUATIONS = ENGLISH_PUNCTUATIONS + CHINESE_PUNCTUATIONS
+def __getattr__(name: str):
+    if name == 'WORDS_TO_IGNORE':
+        return _native().WORDS_TO_IGNORE
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
 
 
 def clean_en_token(token: str) -> str:
-
-    punctuations_to_strip = PUNCTUATIONS
-
-    # Detect if the token is a special case like U.S.A., E-mail, percentage, etc.
-    # and skip further processing if that is the case.
-    special_cases_pattern = re.compile(r'^(?:[A-Za-z]\.)+|\w+[@]\w+\.\w+|\d+%$|^(?:[\u4e00-\u9fff]+)$')
-    if special_cases_pattern.match(token):
-        return token
-
-    # Strip unwanted punctuations from front and end
-    token = token.strip(punctuations_to_strip)
-
-    return token
+    return _native().clean_en_token(token)
 
 
-def tokenize_and_filter(input_text: str) -> str:
-    patterns = r"""(?x)                    # Enable verbose mode, allowing regex to be on multiple lines and ignore whitespace
-                (?:[A-Za-z]\.)+          # Match abbreviations, e.g., U.S.A.
-                |\d+(?:\.\d+)?%?         # Match numbers, including percentages
-                |\w+(?:[-']\w+)*         # Match words, allowing for hyphens and apostrophes
-                |(?:[\w\-\']@)+\w+       # Match email addresses
-                """
-
-    tokens = re.findall(patterns, input_text)
-
-    stop_words = WORDS_TO_IGNORE
-
-    filtered_tokens = []
-    for token in tokens:
-        token_lower = clean_en_token(token).lower()
-        if token_lower not in stop_words and not all(char in PUNCTUATIONS for char in token_lower):
-            filtered_tokens.append(token_lower)
-
-    return filtered_tokens
-
-
-def string_tokenizer(text: str) -> List[str]:
-    text = text.lower().strip()
-    if has_chinese_chars(text):
-        import jieba
-        _wordlist_tmp = list(jieba.lcut(text))
-        _wordlist = []
-        for word in _wordlist_tmp:
-            if not all(char in PUNCTUATIONS for char in word):
-                _wordlist.append(word)
-    else:
-        try:
-            _wordlist = tokenize_and_filter(text)
-        except Exception:
-            logger.warning('Tokenize words by spaces.')
-            _wordlist = text.split()
-    _wordlist_res = []
-    for word in _wordlist:
-        if word in WORDS_TO_IGNORE:
-            continue
-        else:
-            _wordlist_res.append(word)
-
-    import snowballstemmer
-    stemmer = snowballstemmer.stemmer('english')
-    return stemmer.stemWords(_wordlist_res)
+def tokenize_and_filter(input_text: str) -> List[str]:
+    return _native().tokenize_and_filter(input_text)
 
 
 def split_text_into_keywords(text: str) -> List[str]:
-    _wordlist = string_tokenizer(text)
-    wordlist = []
-    for x in _wordlist:
-        if x in WORDS_TO_IGNORE:
-            continue
-        wordlist.append(x)
-    return wordlist
+    return _native().split_text_into_keywords(text)
+
+
+def string_tokenizer(text: str) -> List[str]:
+    return _native().string_tokenizer(text)
 
 
 def parse_keyword(text):
@@ -280,25 +194,16 @@ def parse_keyword(text):
     except Exception:
         return split_text_into_keywords(text)
 
-    import snowballstemmer
-    stemmer = snowballstemmer.stemmer('english')
-
-    # json format
-    _wordlist = []
     try:
+        native = _native()
+        _wordlist = []
         if 'keywords_zh' in res and isinstance(res['keywords_zh'], list):
             _wordlist.extend([kw.lower() for kw in res['keywords_zh']])
         if 'keywords_en' in res and isinstance(res['keywords_en'], list):
             _wordlist.extend([kw.lower() for kw in res['keywords_en']])
-        _wordlist = stemmer.stemWords(_wordlist)
-        wordlist = []
-        for x in _wordlist:
-            if x in WORDS_TO_IGNORE:
-                continue
-            wordlist.append(x)
-        split_wordlist = split_text_into_keywords(res['text'])
-        wordlist += split_wordlist
+        _wordlist = native.stem_words(_wordlist)
+        wordlist = [word for word in _wordlist if word not in __getattr__('WORDS_TO_IGNORE')]
+        wordlist += split_text_into_keywords(res.get('text', ''))
         return wordlist
     except Exception:
-        # TODO: This catch is too broad.
         return split_text_into_keywords(text)

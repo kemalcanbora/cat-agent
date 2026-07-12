@@ -1,9 +1,12 @@
 """Tests for cat_agent.llm.function_calling."""
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from cat_agent.llm.schema import ASSISTANT, FUNCTION, USER, ContentItem, FunctionCall, Message
 from cat_agent.llm.function_calling import (
+    BaseFnCallModel,
     simulate_response_completion_with_chat,
     validate_num_fncall_results,
 )
@@ -100,3 +103,40 @@ class TestValidateNumFncallResults:
         ]
         with pytest.raises(ValueError, match="same order|must match"):
             validate_num_fncall_results(messages, support_multimodal_input=False)
+
+
+class TestBaseFnCallModelStreamPostprocess:
+
+    def test_defers_fncall_postprocess_until_final_stream_chunk(self):
+        class _StubFnCallModel(BaseFnCallModel):
+            def _chat_with_functions(self, *args, **kwargs):
+                raise NotImplementedError
+
+            def _chat_stream(self, *args, **kwargs):
+                raise NotImplementedError
+
+            def _chat_no_stream(self, *args, **kwargs):
+                raise NotImplementedError
+
+        model = _StubFnCallModel({'generate_cfg': {'fncall_prompt_type': 'nous'}})
+        model.fncall_prompt = MagicMock()
+        model.fncall_prompt.postprocess_fncall_messages.side_effect = lambda messages, **kwargs: messages
+
+        chunk1 = [Message(ASSISTANT, 'partial')]
+        chunk2 = [Message(ASSISTANT, 'partial tool')]
+        chunks = iter([chunk1, chunk2])
+        generate_cfg = {'parallel_function_calls': False, 'function_choice': 'auto'}
+
+        with patch.object(
+            BaseFnCallModel.__bases__[0],
+            '_postprocess_messages',
+            side_effect=lambda messages, **kwargs: messages,
+        ) as base_postprocess:
+            outputs = list(model._postprocess_messages_iterator(
+                chunks, fncall_mode=True, generate_cfg=generate_cfg))
+
+        assert outputs == [chunk1, chunk2]
+        assert base_postprocess.call_count == 2
+        base_postprocess.assert_any_call(chunk1, fncall_mode=False, generate_cfg=generate_cfg)
+        model.fncall_prompt.postprocess_fncall_messages.assert_called_once()
+        assert model.fncall_prompt.postprocess_fncall_messages.call_args.kwargs['messages'] is chunk2

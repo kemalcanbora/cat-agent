@@ -215,7 +215,7 @@ class QWenTokenizer:
         return self.tokenizer.encode(text, allowed_special='all', disallowed_special=())
 
     def count_tokens(self, text: str) -> int:
-        return len(self.encode(text))
+        return count_tokens(text)
 
     def truncate(self, text: str, max_token: int, start_token: int = 0, keep_both_sides: bool = False) -> str:
         token_ids = self.encode(text)[start_token:]
@@ -242,4 +242,9 @@ tokenizer = QWenTokenizer(Path(__file__).resolve().parent / 'qwen.tiktoken')
 
 
 def count_tokens(text: str) -> int:
-    return tokenizer.count_tokens(text)
+    from cat_agent._native import count_qwen_tokens, init_qwen_tokenizer
+
+    if not getattr(count_tokens, '_initialized', False):
+        init_qwen_tokenizer(str(Path(__file__).resolve().parent / 'qwen.tiktoken'))
+        count_tokens._initialized = True
+    return count_qwen_tokens(text)

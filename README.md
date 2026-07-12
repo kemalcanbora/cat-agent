@@ -65,10 +65,16 @@ and optionally runs an example. CI uses the same script in the `consumer-install
 
 ### Rust RAG engine
 
-Released platform wheels include the Rust BM25 index used by `KeywordSearch`.
-There is no Python BM25 fallback. Installing a published wheel does not require
-a local Rust toolchain; source installs require Rust because maturin builds the
-native extension during install.
+Released platform wheels include the native Rust stack used by RAG:
+
+- **BM25 index** for `KeywordSearch`
+- **Keyword tokenization** (English stemming + Chinese segmentation via `jieba-rs`)
+- **Qwen token counting** via `tiktoken-rs`
+- **PDF text extraction** for `.pdf` ingestion
+
+There are no Python fallbacks for these paths. Installing a published wheel does
+not require a local Rust toolchain; source installs require Rust because maturin
+builds the native extension during install.
 
 The public `KeywordSearch`, `Retrieval`, `Record`, and `Chunk` APIs do not
 change. The Rust implementation caches one index per unchanged corpus instead
@@ -76,10 +82,8 @@ of rebuilding and re-tokenizing it for every query. The index is persisted under
 `workspace/storage/keyword_indexes/`; pass
 `rebuild_rag=True` to rebuild it or `keyword_index_path` to override its path.
 
-The wheel also contains an experimental text-only Rust PDF parser. It is
-disabled by default because the Python parser preserves tables and layout more
-faithfully. Opt in with `CAT_AGENT_NATIVE_PDF=1` only for text-heavy ingestion;
-Cat-Agent falls back to the Python parser when the native extension is absent.
+The Rust PDF parser is text-only. It does not preserve tables, images, or
+layout metadata the way the old Python pdfminer/pdfplumber stack did.
 
 ## Logging
 

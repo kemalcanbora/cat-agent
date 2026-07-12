@@ -7,7 +7,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WHEEL="${1:-}"
 if [[ -z "${WHEEL}" ]]; then
-  WHEEL="$(ls -1 "${ROOT}"/dist/*.whl | head -1)"
+  WHEEL="$(ls -1t "${ROOT}"/dist/*.whl | head -1)"
 fi
 if [[ ! -f "${WHEEL}" ]]; then
   echo "Error: wheel not found: ${WHEEL}" >&2

@@ -30,7 +30,7 @@ echo "Using interpreter: $("${PYTHON}" --version)"
 rm -rf dist
 "${PYTHON}" -m maturin build --release --manifest-path native/Cargo.toml --out dist
 
-WHEEL="$(ls -1 dist/*.whl | head -1)"
+WHEEL="$(ls -1t dist/*.whl | head -1)"
 if [[ -z "${WHEEL}" ]]; then
   echo "Error: no wheel produced under dist/" >&2
   exit 1

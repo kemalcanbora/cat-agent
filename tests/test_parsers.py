@@ -479,164 +479,25 @@ class TestParseHtmlBs:
 # ===========================================================================
 
 
-class TestPdfParserHelpers:
-
-    def test_table_to_string(self):
-        from cat_agent.tools.parsers.pdf_parser import _table_to_string
-
-        table = [["A", "B"], ["C", None], ["D\nE", "F"]]
-        out = _table_to_string(table)
-        assert "|A|B|" in out
-        assert "|C|None|" in out
-        assert "|D E|F|" in out  # newline replaced by space
-
-    def test_table_to_string_empty(self):
-        from cat_agent.tools.parsers.pdf_parser import _table_to_string
-        assert _table_to_string([]) == ""
-
-    def test_table_to_string_single_cell(self):
-        from cat_agent.tools.parsers.pdf_parser import _table_to_string
-        assert _table_to_string([["only"]]) == "|only|"
-
-
 class TestParsePdf:
 
     def test_extract_image_raises(self):
-        """parse_pdf raises when extract_image=True and an LTImage element is encountered."""
-
-        # Create mock elements: one LTImage
-        mock_image = MagicMock()
-        mock_image.__class__ = type("LTImage", (), {})
-
-        # We need the isinstance checks to work, so we patch at a higher level:
-        # Instead of calling parse_pdf with a real path we test the raise path directly
-        # by checking the contract.
-        # For simplicity, verify the ValueError contract via the flag:
-        # parse_pdf with extract_image=False should not raise on its own (it needs a real file).
-        # The extract_image=True path is tested in test_simple_doc_parser.py integration.
-        pass
-
-    def test_native_pdf_prototype_preserves_page_shape(self):
-        from cat_agent.tools.parsers.pdf_parser import parse_pdf_native
-
-        mock_native = MagicMock()
-        mock_native.parse_pdf_text.return_value = [(1, "First page"), (2, "Second page")]
-        with patch("cat_agent.tools.parsers.pdf_parser.import_module", return_value=mock_native):
-            doc = parse_pdf_native("/f.pdf")
-
-        assert doc == [
-            {"page_num": 1, "content": [{"text": "First page"}]},
-            {"page_num": 2, "content": [{"text": "Second page"}]},
-        ]
-
-    def test_native_pdf_prototype_rejects_images(self):
-        from cat_agent.tools.parsers.pdf_parser import parse_pdf_native
+        from cat_agent.tools.parsers.pdf_parser import parse_pdf
 
         with pytest.raises(ValueError, match="does not support extracting images"):
-            parse_pdf_native("/f.pdf", extract_image=True)
+            parse_pdf("/f.pdf", extract_image=True)
 
-    def test_postprocess_removes_text_overlapping_table(self):
-        from cat_agent.tools.parsers.pdf_parser import _postprocess_page_content
+    def test_native_pdf_extracts_page_text(self, tmp_path):
+        from tests.test_native_rag import _minimal_pdf
+        from cat_agent.tools.parsers.pdf_parser import parse_pdf
 
-        # The overlap check is:
-        #   t.bbox[0] <= p.bbox[0]  AND  p.bbox[1] <= t.bbox[1]
-        #   AND  t.bbox[2] <= p.bbox[2]  AND  p.bbox[3] <= t.bbox[3]
-        table_obj = MagicMock()
-        table_obj.bbox = (0, 50, 50, 100)
+        path = tmp_path / "sample.pdf"
+        path.write_bytes(_minimal_pdf("Hello native PDF"))
+        doc = parse_pdf(str(path))
 
-        text_obj = MagicMock()
-        text_obj.bbox = (10, 20, 90, 80)
-        text_obj.height = 12
-
-        page_content = [
-            {"table": "|a|b|", "obj": table_obj},
-            {"text": "overlapping text", "obj": text_obj, "font-size": 12},
-        ]
-        result = _postprocess_page_content(page_content)
-
-        texts = [c for c in result if "text" in c]
-        tables = [c for c in result if "table" in c]
-        assert len(tables) == 1
-        assert len(texts) == 0
-
-    def test_postprocess_keeps_non_overlapping_text(self):
-        from cat_agent.tools.parsers.pdf_parser import _postprocess_page_content
-
-        table_obj = MagicMock()
-        table_obj.bbox = (0, 0, 50, 50)
-
-        text_obj = MagicMock()
-        text_obj.bbox = (60, 60, 100, 100)
-        text_obj.height = 20
-
-        page_content = [
-            {"table": "|x|", "obj": table_obj},
-            {"text": "separate text", "obj": text_obj, "font-size": 12},
-        ]
-        result = _postprocess_page_content(page_content)
-
-        texts = [c for c in result if "text" in c]
-        assert len(texts) == 1
-        assert "separate text" in texts[0]["text"]
-
-    def test_postprocess_merges_split_paragraphs(self):
-        from cat_agent.tools.parsers.pdf_parser import _postprocess_page_content
-
-        obj1 = MagicMock()
-        obj1.bbox = (0, 0, 100, 14)
-        obj1.height = 14
-
-        obj2 = MagicMock()
-        obj2.bbox = (0, 14, 100, 26)
-        obj2.height = 10  # shorter than font-size + 1 => should merge
-
-        page_content = [
-            {"text": "First part", "obj": obj1, "font-size": 12},
-            {"text": "second part", "obj": obj2, "font-size": 12},
-        ]
-        result = _postprocess_page_content(page_content)
-
-        # Should be merged into one text entry
-        texts = [c for c in result if "text" in c]
-        assert len(texts) == 1
-        assert "First part" in texts[0]["text"]
-        assert "second part" in texts[0]["text"]
-
-    def test_postprocess_does_not_merge_different_fonts(self):
-        from cat_agent.tools.parsers.pdf_parser import _postprocess_page_content
-
-        obj1 = MagicMock()
-        obj1.bbox = (0, 0, 100, 14)
-        obj1.height = 14
-
-        obj2 = MagicMock()
-        obj2.bbox = (0, 14, 100, 26)
-        obj2.height = 10
-
-        page_content = [
-            {"text": "Title", "obj": obj1, "font-size": 24},
-            {"text": "Body text", "obj": obj2, "font-size": 12},
-        ]
-        result = _postprocess_page_content(page_content)
-
-        texts = [c for c in result if "text" in c]
-        assert len(texts) == 2
-
-    def test_postprocess_cleans_text_and_removes_obj(self):
-        from cat_agent.tools.parsers.pdf_parser import _postprocess_page_content
-
-        obj = MagicMock()
-        obj.bbox = (0, 0, 100, 20)
-        obj.height = 20
-
-        page_content = [
-            {"text": "Hello (cid:1) world", "obj": obj, "font-size": 12},
-        ]
-        result = _postprocess_page_content(page_content)
-
-        assert len(result) == 1
-        assert "(cid:1)" not in result[0]["text"]
-        assert "obj" not in result[0]
+        assert len(doc) == 1
+        assert doc[0]["page_num"] == 1
+        assert doc[0]["content"][0]["text"] == "Hello native PDF"
 
 
 # ===========================================================================
@@ -832,36 +693,17 @@ class TestParseDocumentDispatch:
 
         assert doc[0]["content"][0]["text"] == "from dispatch"
 
-    def test_dispatches_to_opt_in_native_pdf(self):
+    def test_dispatches_pdf(self):
         from cat_agent.tools.parsers import parse_document
 
         expected = [{"page_num": 1, "content": [{"text": "native"}]}]
-        with patch.dict(os.environ, {"CAT_AGENT_NATIVE_PDF": "1"}):
-            with patch(
-                "cat_agent.tools.parsers.pdf_parser.parse_pdf_native",
-                return_value=expected,
-            ) as native_parser:
-                doc = parse_document("/f.pdf", file_type="pdf")
+        with patch(
+            "cat_agent.tools.parsers.pdf_parser.parse_pdf",
+            return_value=expected,
+        ) as pdf_parser:
+            doc = parse_document("/f.pdf", file_type="pdf")
 
-        native_parser.assert_called_once_with("/f.pdf", False)
-        assert doc == expected
-
-    def test_native_pdf_missing_falls_back_to_python_parser(self):
-        from cat_agent.tools.parsers import parse_document
-
-        expected = [{"page_num": 1, "content": [{"text": "python"}]}]
-        with patch.dict(os.environ, {"CAT_AGENT_NATIVE_PDF": "true"}):
-            with patch(
-                "cat_agent.tools.parsers.pdf_parser.parse_pdf_native",
-                side_effect=ImportError,
-            ):
-                with patch(
-                    "cat_agent.tools.parsers.pdf_parser.parse_pdf",
-                    return_value=expected,
-                ) as python_parser:
-                    doc = parse_document("/f.pdf", file_type="pdf")
-
-        python_parser.assert_called_once_with("/f.pdf", False)
+        pdf_parser.assert_called_once_with("/f.pdf", False)
         assert doc == expected
 
     def test_unknown_type_raises(self):

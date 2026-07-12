@@ -33,11 +33,7 @@ dependencies = [
 [project.optional-dependencies]
 rag = [
     "charset-normalizer",
-    "jieba",
-    "snowballstemmer",
     "beautifulsoup4",
-    "pdfminer.six",
-    "pdfplumber",
     "python-docx",
     "python-pptx",
     "polars",

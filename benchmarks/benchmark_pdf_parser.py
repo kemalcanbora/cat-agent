@@ -1,11 +1,4 @@
-"""Benchmark PDF extraction before considering a native parser replacement.
-
-With no path, the script creates a text-heavy synthetic PDF using matplotlib.
-Pass a representative production PDF for a meaningful fidelity/performance
-decision:
-
-    python benchmarks/benchmark_pdf_parser.py contract.pdf --repeats 3
-"""
+"""Benchmark PDF extraction with the mandatory Rust parser."""
 
 from __future__ import annotations
 
@@ -15,7 +8,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from cat_agent.tools.parsers.pdf_parser import parse_pdf, parse_pdf_native
+from cat_agent.tools.parsers.pdf_parser import parse_pdf
 
 
 def _synthetic_pdf(path: Path, pages: int) -> None:
@@ -72,23 +65,6 @@ def main() -> None:
     )
     if page_count:
         print(f"Mean per page: {statistics.mean(samples) / page_count:.2f} ms")
-
-    try:
-        native_parsed = parse_pdf_native(str(pdf_path))
-    except ImportError:
-        print("Rust PDF prototype: unavailable (build the native extension)")
-    else:
-        native_samples = []
-        for _ in range(args.repeats):
-            started = time.perf_counter()
-            native_parsed = parse_pdf_native(str(pdf_path))
-            native_samples.append((time.perf_counter() - started) * 1000)
-        native_items = sum(len(page["content"]) for page in native_parsed)
-        print(f"Rust extracted pages: {len(native_parsed)}; items: {native_items}")
-        print(
-            f"Rust parse time: mean={statistics.mean(native_samples):.2f} ms "
-            f"median={statistics.median(native_samples):.2f} ms"
-        )
 
     if temporary is not None:
         temporary.cleanup()

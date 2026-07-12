@@ -12,10 +12,12 @@
 
 import copy
 from abc import ABC
+from pprint import pformat
 from typing import Dict, Iterator, List, Literal, Optional, Union
 
 from cat_agent.llm.base import BaseChatModel
 from cat_agent.llm.schema import ASSISTANT, FUNCTION, USER, ContentItem, Message
+from cat_agent.log import logger
 
 
 class BaseFnCallModel(BaseChatModel, ABC):
@@ -78,6 +80,30 @@ class BaseFnCallModel(BaseChatModel, ABC):
                 thought_in_content=generate_cfg.get('thought_in_content', False),
             )
         return messages
+
+    def _postprocess_messages_iterator(
+        self,
+        messages: Iterator[List[Message]],
+        fncall_mode: bool,
+        generate_cfg: dict,
+    ) -> Iterator[List[Message]]:
+        """Defer expensive fncall parsing until the final stream chunk."""
+        if not fncall_mode:
+            yield from super()._postprocess_messages_iterator(
+                messages, fncall_mode=False, generate_cfg=generate_cfg)
+            return
+
+        pending: Optional[List[Message]] = None
+        pre_msg: List[Message] = []
+        for pre_msg in messages:
+            if pending is not None:
+                yield super()._postprocess_messages(
+                    pending, fncall_mode=False, generate_cfg=generate_cfg)
+            pending = pre_msg
+        if pending is not None:
+            yield self._postprocess_messages(
+                pending, fncall_mode=True, generate_cfg=generate_cfg)
+        logger.debug(f'LLM Output: \n{pformat([_.model_dump() for _ in pre_msg], indent=2)}')
 
     def _remove_fncall_messages(self, messages: List[Message], lang: Literal['en', 'zh']) -> List[Message]:
         # Change function calls into user messages so that the model won't try

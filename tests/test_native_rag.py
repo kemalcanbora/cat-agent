@@ -67,7 +67,23 @@ def test_rust_index_round_trip(tmp_path):
     assert restored.scores(query) == pytest.approx(index.scores(query))
 
 
-def test_rust_pdf_prototype_extracts_page_text(tmp_path):
+def test_rust_tokenizer_filters_stop_words():
+    assert "the" not in native.split_text_into_keywords("the quick brown")
+    assert "quick" in native.split_text_into_keywords("the quick brown")
+
+
+def test_rust_qwen_token_count_matches_python_baseline():
+    from pathlib import Path
+
+    from cat_agent.utils.tokenization_qwen import tokenizer
+
+    vocab = str(Path(__file__).resolve().parents[1] / "cat_agent/utils/qwen.tiktoken")
+    native.init_qwen_tokenizer(vocab)
+    sample = "Token accounting should stay consistent across Rust and Python."
+    assert native.count_qwen_tokens(sample) == len(tokenizer.encode(sample))
+
+
+def test_rust_pdf_extracts_page_text(tmp_path):
     path = tmp_path / "sample.pdf"
     path.write_bytes(_minimal_pdf("Hello native PDF"))
 
