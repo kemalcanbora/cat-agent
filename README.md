@@ -25,7 +25,7 @@
 - **RAG** — Retrieval-augmented generation with vector, keyword, and hybrid search
 - **Code interpreter** — Safe Python execution via Docker or WASM sandbox (no Docker required)
 - **Rich tool set** — Web search, doc parsing, image generation, MCP, storage, and extensible custom tools
-- **Multiple LLM backends** — OpenAI-compatible APIs, LlamaCpp (+ vision), OpenVINO, Transformers, MLX-LM (Apple silicon)
+- **Multiple LLM backends** — Transformers (default local/GPU), OpenAI-compatible APIs, LlamaCpp (+ vision), OpenVINO; MLX-LM optional on Apple silicon
 - **Structured logging** — Loguru-powered logging with coloured console, JSON, and file rotation support
 - **Observability hooks** — Structured run/node/LLM/tool events with pluggable handlers (callbacks, print, loguru, Mermaid, OpenTelemetry)
 
@@ -35,9 +35,10 @@
 
 ## Installation
 
-Requires **Python 3.10+**. On zsh, quote extras:
+Requires **Python 3.10+**. Base install includes **Transformers**, **PyTorch**, and **Accelerate** for the default local/GPU backend. On zsh, quote extras:
 
 ```bash
+  pip install cat-agent
   pip install 'cat-agent[rag]'
 ```
 
@@ -45,6 +46,7 @@ Requires **Python 3.10+**. On zsh, quote extras:
 
 ```bash
   pip install 'cat-agent[rag]'              # RAG (retrieval, doc parsing, etc.)
+  pip install 'cat-agent[mlx]'              # MLX-LM backend (Apple silicon only)
   pip install 'cat-agent[mcp]'              # MCP (Model Context Protocol)
   pip install 'cat-agent[python_executor]'    # Python executor (math, sympy, etc.)
   pip install 'cat-agent[code_interpreter]' # Code interpreter server (Jupyter, FastAPI)
@@ -248,11 +250,12 @@ Same concept using the HuggingFace Transformers backend (Qwen3-1.7B):
   python examples/transformers_math_guy/math_guy.py
 ```
 
-### Math tool with MLX-LM (Apple silicon)
+### Math tool with MLX-LM (Apple silicon, optional)
 
-Same concept using the MLX-LM backend (requires `mlx-lm==0.31.1`):
+Same concept using the MLX-LM backend (requires the optional `mlx` extra):
 
 ```bash
+  pip install 'cat-agent[mlx]'
   python examples/mlx_lm_math_guy/math_guy.py
 ```
 
@@ -374,8 +377,8 @@ Demonstrates coloured console logs, JSON output, and file logging alongside an a
 | OpenAI-compatible | `oai` | Any OpenAI-compatible API (default) |
 | LlamaCpp | `llama_cpp` | Local GGUF models via llama-cpp-python |
 | LlamaCpp Vision | `llama_cpp_vision` | Multimodal GGUF models (Qwen2-VL, LLaVA, etc.) |
-| Transformers | `transformers` | HuggingFace Transformers models |
-| MLX-LM | `mlx_lm` | Apple silicon local models via mlx-lm |
+| Transformers | `transformers` | HuggingFace Transformers models (included in base install) |
+| MLX-LM | `mlx_lm` | Apple silicon local models via mlx-lm (`pip install 'cat-agent[mlx]'`) |
 | OpenVINO | `openvino` | Optimised inference on Intel hardware |
 
 ```python

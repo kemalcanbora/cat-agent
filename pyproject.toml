@@ -25,12 +25,17 @@ dependencies = [
     "pillow",
     "dotenv",
     "llama-cpp-python>=0.3.16",
-    "mlx-lm==0.31.1",
+    "transformers>=4.51.0",
+    "torch>=2.0",
+    "accelerate>=1.4.0",
     "wasmtime==41.0.0",
     "loguru==0.7.3"
 ]
 
 [project.optional-dependencies]
+mlx = [
+    "mlx-lm==0.31.1",
+]
 rag = [
     "charset-normalizer",
     "beautifulsoup4",

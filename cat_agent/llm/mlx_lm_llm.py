@@ -47,7 +47,7 @@ class MLXLm(BaseFnCallModel):
                 message=(
                     "mlx-lm backend requested but `mlx-lm` (and its MLX dependencies) "
                     "are not installed.\n"
-                    "Install it with: pip install mlx-lm==0.31.1"
+                    "Install it with: pip install 'cat-agent[mlx]'"
                 ),
             )
 
