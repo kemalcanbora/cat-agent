@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::sync::Mutex;
 
-use base64::{engine::general_purpose::STANDARD, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use once_cell::sync::OnceCell;
 use pyo3::exceptions::PyIOError;
 use pyo3::prelude::*;

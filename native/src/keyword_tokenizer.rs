@@ -34,9 +34,7 @@ fn special_case_re() -> &'static Regex {
 }
 
 fn chinese_re() -> &'static Regex {
-    CHINESE_RE.get_or_init(|| {
-        Regex::new(r"[\u4e00-\u9fff]").expect("valid chinese regex")
-    })
+    CHINESE_RE.get_or_init(|| Regex::new(r"[\u4e00-\u9fff]").expect("valid chinese regex"))
 }
 
 fn jieba() -> &'static Jieba {
