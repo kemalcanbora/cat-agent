@@ -26,7 +26,6 @@ def _check_deps_for_rag():
         import jieba  # noqa
         import pdfminer  # noqa
         import pdfplumber  # noqa
-        import rank_bm25  # noqa
         import snowballstemmer  # noqa
         from bs4 import BeautifulSoup  # noqa
         from docx import Document  # noqa
@@ -69,7 +68,7 @@ class Retrieval(BaseTool):
 
         self.rag_searchers = self.cfg.get('rag_searchers', DEFAULT_RAG_SEARCHERS)
         # Pass the full cfg down to sub-searchers so options like `rebuild_rag`
-        # can be honored by implementations such as LeannSearch.
+        # can be honored by implementations such as KeywordSearch.
         if len(self.rag_searchers) == 1:
             self.search = TOOL_REGISTRY[self.rag_searchers[0]](self.cfg)
         else:

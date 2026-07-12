@@ -45,6 +45,9 @@ coverage.xml
 # Workspace / runtime artifacts
 workspace/
 
+# Rust
+target/
+
 # Misc
 .DS_Store
 *.log

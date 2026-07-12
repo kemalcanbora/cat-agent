@@ -10,14 +10,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
+import os
 import re
 import string
+from collections import OrderedDict
+from hashlib import sha256
+from importlib import import_module
 from typing import List, Tuple
 
 import json5
 
 from cat_agent.log import logger
-from cat_agent.settings import DEFAULT_MAX_REF_TOKEN
+from cat_agent.settings import DEFAULT_MAX_REF_TOKEN, DEFAULT_WORKSPACE
 from cat_agent.tools.base import register_tool
 from cat_agent.tools.doc_parser import Record
 from cat_agent.tools.search_tools.base_search import BaseSearch
@@ -26,6 +31,23 @@ from cat_agent.utils.utils import has_chinese_chars
 
 @register_tool('keyword_search')
 class KeywordSearch(BaseSearch):
+    """BM25 retrieval with a bounded, corpus-keyed index cache.
+
+    Tokenization is intentionally kept in Python to preserve the existing
+    jieba/Snowball behavior. BM25 scoring and index storage are handled by the
+    required ``cat_agent._native`` Rust module.
+    """
+
+    def __init__(self, cfg=None):
+        super().__init__(cfg)
+        self._index_cache = OrderedDict()
+        self._index_cache_size = max(1, int(self.cfg.get('index_cache_size', 4)))
+        self.rebuild_rag = self.cfg.get('rebuild_rag')
+        self.index_path = self.cfg.get(
+            'keyword_index_path',
+            os.path.join(DEFAULT_WORKSPACE, 'storage', 'keyword_indexes', 'rag_index.json'),
+        )
+        self.meta_path = self.cfg.get('keyword_meta_path', f'{self.index_path}.meta.json')
 
     def search(self, query: str, docs: List[Record], max_ref_token: int = DEFAULT_MAX_REF_TOKEN) -> list:
         chunk_and_score = self.sort_by_scores(query=query, docs=docs)
@@ -46,15 +68,22 @@ class KeywordSearch(BaseSearch):
             # This represents the queries that do not use retrieval: summarize, etc.
             return []
 
-        # Plain all chunks from all docs
-        all_chunks = []
-        for doc in docs:
-            all_chunks.extend(doc.raw)
+        cache_key = _corpus_fingerprint(docs)
+        cached = self._index_cache.get(cache_key)
+        if cached is None:
+            all_chunks = [chunk for doc in docs for chunk in doc.raw]
+            tokenized_corpus = [split_text_into_keywords(chunk.content) for chunk in all_chunks]
+            index = self._load_or_build_index(tokenized_corpus, all_chunks, cache_key)
+            cached = (all_chunks, index)
+            self._index_cache[cache_key] = cached
+            self._index_cache.move_to_end(cache_key)
+            while len(self._index_cache) > self._index_cache_size:
+                self._index_cache.popitem(last=False)
+        else:
+            self._index_cache.move_to_end(cache_key)
 
-        # Using bm25 retrieval
-        from rank_bm25 import BM25Okapi
-        bm25 = BM25Okapi([split_text_into_keywords(x.content) for x in all_chunks])
-        doc_scores = bm25.get_scores(wordlist)
+        all_chunks, index = cached
+        doc_scores = index.scores(wordlist)
         chunk_and_score = [
             (chk.metadata['source'], chk.metadata['chunk_id'], score) for chk, score in zip(all_chunks, doc_scores)
         ]
@@ -62,6 +91,88 @@ class KeywordSearch(BaseSearch):
         assert len(chunk_and_score) > 0
 
         return chunk_and_score
+
+    @staticmethod
+    def _native_index_type():
+        try:
+            return import_module('cat_agent._native').RagIndex
+        except ImportError as error:
+            raise ImportError(
+                'KeywordSearch requires the cat_agent native Rust extension. '
+                'Install a platform wheel or build it with: '
+                '`maturin develop --manifest-path native/Cargo.toml`'
+            ) from error
+
+    def _load_or_build_index(self, tokenized_corpus, all_chunks, cache_key):
+        rag_index = self._native_index_type()
+        metadata = self._load_metadata()
+        can_reuse = (
+            self.rebuild_rag is not True
+            and metadata.get('fingerprint') == cache_key
+            and metadata.get('chunk_count') == len(all_chunks)
+            and os.path.isfile(self.index_path)
+        )
+        if can_reuse:
+            try:
+                logger.info(f'[KeywordSearch] Reusing Rust BM25 index at {self.index_path}')
+                return rag_index.load(self.index_path)
+            except (OSError, RuntimeError, ValueError) as error:
+                logger.warning(f'[KeywordSearch] Failed to load persisted index; rebuilding: {error}')
+
+        logger.info(f'[KeywordSearch] Building Rust BM25 index at {self.index_path}')
+        index = rag_index(tokenized_corpus)
+        self._save_index(index, all_chunks, cache_key)
+        return index
+
+    def _save_index(self, index, all_chunks, cache_key) -> None:
+        os.makedirs(os.path.dirname(self.index_path) or '.', exist_ok=True)
+        os.makedirs(os.path.dirname(self.meta_path) or '.', exist_ok=True)
+        index_tmp = f'{self.index_path}.tmp'
+        meta_tmp = f'{self.meta_path}.tmp'
+        metadata = {
+            'fingerprint': cache_key,
+            'chunk_count': len(all_chunks),
+            'chunks': [
+                [chunk.metadata.get('source', ''), chunk.metadata.get('chunk_id')]
+                for chunk in all_chunks
+            ],
+        }
+        try:
+            index.save(index_tmp)
+            os.replace(index_tmp, self.index_path)
+            with open(meta_tmp, 'w', encoding='utf-8') as file:
+                json.dump(metadata, file, ensure_ascii=False)
+            os.replace(meta_tmp, self.meta_path)
+        except (OSError, TypeError) as error:
+            logger.warning(f'[KeywordSearch] Failed to persist Rust BM25 index: {error}')
+            for path in (index_tmp, meta_tmp):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+
+    def _load_metadata(self) -> dict:
+        try:
+            with open(self.meta_path, encoding='utf-8') as file:
+                metadata = json.load(file)
+        except (OSError, ValueError, TypeError):
+            return {}
+        return metadata if isinstance(metadata, dict) else {}
+
+
+def _corpus_fingerprint(docs: List[Record]) -> str:
+    digest = sha256()
+    for doc in docs:
+        digest.update(doc.url.encode('utf-8', errors='surrogatepass'))
+        digest.update(b'\0')
+        for chunk in doc.raw:
+            digest.update(str(chunk.metadata.get('source', '')).encode('utf-8', errors='surrogatepass'))
+            digest.update(b'\0')
+            digest.update(str(chunk.metadata.get('chunk_id', '')).encode('ascii', errors='replace'))
+            digest.update(b'\0')
+            digest.update(chunk.content.encode('utf-8', errors='surrogatepass'))
+            digest.update(b'\xff')
+    return digest.hexdigest()
 
 
 WORDS_TO_IGNORE = [

@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=61", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
 
 [project]
 name = "cat-agent"
@@ -33,7 +33,6 @@ dependencies = [
 [project.optional-dependencies]
 rag = [
     "charset-normalizer",
-    "rank_bm25",
     "jieba",
     "snowballstemmer",
     "beautifulsoup4",
@@ -46,7 +45,6 @@ rag = [
     "fastexcel",
     "pyarrow==17.0.0",
     "tabulate",
-    "leann==0.3.6",
 ]
 mcp = ["mcp"]
 otel = [
@@ -72,6 +70,10 @@ code_interpreter = [
 test = [
     "pytest",
     "pytest-cov",
+    "rank_bm25",
+]
+all = [
+    "cat-agent[rag,mcp,otel,python_executor,code_interpreter]",
 ]
 
 [project.urls]
@@ -85,7 +87,7 @@ testpaths = ["tests"]
 include-package-data = true
 
 [tool.setuptools.packages.find]
-exclude = ["examples", "examples.*"]
+exclude = ["benchmarks", "benchmarks.*", "examples", "examples.*", "native", "native.*", "tests", "tests.*"]
 
 [tool.setuptools.dynamic]
 version = { attr = "cat_agent.__version__" }
@@ -101,4 +103,11 @@ readme = { file = "README.md", content-type = "text/markdown" }
     "tools/resource/wasm_runtime/bin/python-3.11.1.wasm",
     "tools/resource/wasm_runtime/usr/local/lib/python311.zip",
 ]
+
+[tool.maturin]
+manifest-path = "native/Cargo.toml"
+python-source = "."
+module-name = "cat_agent._native"
+bindings = "pyo3"
+strip = true
 

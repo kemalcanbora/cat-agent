@@ -8,6 +8,8 @@ Public API:
     DocParserError
 """
 
+import os
+
 from cat_agent.tools.parsers.base import (  # noqa: F401
     DocParserError,
     PARAGRAPH_SPLIT_SYMBOL,
@@ -37,7 +39,12 @@ def parse_document(path: str, extract_image: bool = False, file_type: str = None
     f_type = file_type
 
     if f_type == 'pdf':
-        from cat_agent.tools.parsers.pdf_parser import parse_pdf
+        from cat_agent.tools.parsers.pdf_parser import parse_pdf, parse_pdf_native
+        if os.getenv('CAT_AGENT_NATIVE_PDF', '').lower() in {'1', 'true', 'yes'}:
+            try:
+                return parse_pdf_native(path, extract_image)
+            except (ImportError, AttributeError):
+                pass
         return parse_pdf(path, extract_image)
     elif f_type == 'docx':
         from cat_agent.tools.parsers.word_parser import parse_word

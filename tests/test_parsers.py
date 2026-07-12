@@ -516,6 +516,25 @@ class TestParsePdf:
         # The extract_image=True path is tested in test_simple_doc_parser.py integration.
         pass
 
+    def test_native_pdf_prototype_preserves_page_shape(self):
+        from cat_agent.tools.parsers.pdf_parser import parse_pdf_native
+
+        mock_native = MagicMock()
+        mock_native.parse_pdf_text.return_value = [(1, "First page"), (2, "Second page")]
+        with patch("cat_agent.tools.parsers.pdf_parser.import_module", return_value=mock_native):
+            doc = parse_pdf_native("/f.pdf")
+
+        assert doc == [
+            {"page_num": 1, "content": [{"text": "First page"}]},
+            {"page_num": 2, "content": [{"text": "Second page"}]},
+        ]
+
+    def test_native_pdf_prototype_rejects_images(self):
+        from cat_agent.tools.parsers.pdf_parser import parse_pdf_native
+
+        with pytest.raises(ValueError, match="does not support extracting images"):
+            parse_pdf_native("/f.pdf", extract_image=True)
+
     def test_postprocess_removes_text_overlapping_table(self):
         from cat_agent.tools.parsers.pdf_parser import _postprocess_page_content
 
@@ -812,6 +831,38 @@ class TestParseDocumentDispatch:
             doc = parse_document("/f.docx", file_type="docx")
 
         assert doc[0]["content"][0]["text"] == "from dispatch"
+
+    def test_dispatches_to_opt_in_native_pdf(self):
+        from cat_agent.tools.parsers import parse_document
+
+        expected = [{"page_num": 1, "content": [{"text": "native"}]}]
+        with patch.dict(os.environ, {"CAT_AGENT_NATIVE_PDF": "1"}):
+            with patch(
+                "cat_agent.tools.parsers.pdf_parser.parse_pdf_native",
+                return_value=expected,
+            ) as native_parser:
+                doc = parse_document("/f.pdf", file_type="pdf")
+
+        native_parser.assert_called_once_with("/f.pdf", False)
+        assert doc == expected
+
+    def test_native_pdf_missing_falls_back_to_python_parser(self):
+        from cat_agent.tools.parsers import parse_document
+
+        expected = [{"page_num": 1, "content": [{"text": "python"}]}]
+        with patch.dict(os.environ, {"CAT_AGENT_NATIVE_PDF": "true"}):
+            with patch(
+                "cat_agent.tools.parsers.pdf_parser.parse_pdf_native",
+                side_effect=ImportError,
+            ):
+                with patch(
+                    "cat_agent.tools.parsers.pdf_parser.parse_pdf",
+                    return_value=expected,
+                ) as python_parser:
+                    doc = parse_document("/f.pdf", file_type="pdf")
+
+        python_parser.assert_called_once_with("/f.pdf", False)
+        assert doc == expected
 
     def test_unknown_type_raises(self):
         from cat_agent.tools.parsers import parse_document

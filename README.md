@@ -35,19 +35,51 @@
 
 ## Installation
 
+Requires **Python 3.10+**. On zsh, quote extras:
+
 ```bash
-  pip install cat-agent
+  pip install 'cat-agent[rag]'
 ```
 
 **Optional extras:**
 
 ```bash
-  pip install cat-agent[rag]              # RAG (retrieval, doc parsing, etc.)
-  pip install cat-agent[mcp]              # MCP (Model Context Protocol)
-  pip install cat-agent[python_executor]  # Python executor (math, sympy, etc.)
-  pip install cat-agent[code_interpreter] # Code interpreter server (Jupyter, FastAPI)
-  pip install cat-agent[otel]             # OpenTelemetry export for graph/agent traces
+  pip install 'cat-agent[rag]'              # RAG (retrieval, doc parsing, etc.)
+  pip install 'cat-agent[mcp]'              # MCP (Model Context Protocol)
+  pip install 'cat-agent[python_executor]'    # Python executor (math, sympy, etc.)
+  pip install 'cat-agent[code_interpreter]' # Code interpreter server (Jupyter, FastAPI)
+  pip install 'cat-agent[otel]'               # OpenTelemetry export for graph/agent traces
 ```
+
+### Local test with the same install path as PyPI
+
+Before publishing, install from a built wheel exactly like an end user:
+
+```bash
+  ./scripts/install_consumer.sh rag examples/rag_keyword/rust_keyword_search_demo.py
+```
+
+This builds the native wheel, runs `pip install cat-agent[rag]`, syncs the native
+extension into `./cat_agent/` (so imports work when you run from the repo root),
+and optionally runs an example. CI uses the same script in the `consumer-install` job.
+
+### Rust RAG engine
+
+Released platform wheels include the Rust BM25 index used by `KeywordSearch`.
+There is no Python BM25 fallback. Installing a published wheel does not require
+a local Rust toolchain; source installs require Rust because maturin builds the
+native extension during install.
+
+The public `KeywordSearch`, `Retrieval`, `Record`, and `Chunk` APIs do not
+change. The Rust implementation caches one index per unchanged corpus instead
+of rebuilding and re-tokenizing it for every query. The index is persisted under
+`workspace/storage/keyword_indexes/`; pass
+`rebuild_rag=True` to rebuild it or `keyword_index_path` to override its path.
+
+The wheel also contains an experimental text-only Rust PDF parser. It is
+disabled by default because the Python parser preserves tables and layout more
+faithfully. Opt in with `CAT_AGENT_NATIVE_PDF=1` only for text-heavy ingestion;
+Cat-Agent falls back to the Python parser when the native extension is absent.
 
 ## Logging
 
@@ -261,19 +293,24 @@ Route between a math agent and a general chat agent via a `StateGraph`, with opt
   GRAPH_TRACE=1 python examples/graph/math_guy.py   # print node trace + write graph_dag.mmd
 ```
 
-### RAG with LEANN retriever
+### Rust keyword search
 
-Retrieval-augmented generation using LEANN semantic search:
+Retrieval-augmented generation using the mandatory Rust-backed BM25 index:
 
 ```bash
   pip install cat-agent[rag]
-  python examples/rag_leann/leann_qwen3_demo.py
+  python examples/rag_keyword/keyword_qwen3_demo.py
+```
+
+Low-level index build/query demo (no LLM):
+
+```bash
+  python examples/rag_keyword/rust_keyword_search_demo.py
 ```
 
 Minimal RAG usage in code:
 
 ```python
-from pathlib import Path
 from cat_agent.llm.schema import Message, USER
 from cat_agent.memory import Memory
 import torch
@@ -284,15 +321,19 @@ llm_cfg = {
     "device": "cuda:0" if torch.cuda.is_available() else "cpu",
 }
 
-mem = Memory(llm=llm_cfg, files=["doc.txt"], rag_cfg={"enable_leann": True, "rag_searchers": ["leann_search"]})
-messages = [Message(role=USER, content="How much storage does LEANN save?")]
+mem = Memory(
+    llm=llm_cfg,
+    files=["doc.txt"],
+    rag_cfg={"rag_searchers": ["keyword_search"], "rebuild_rag": False},
+)
+messages = [Message(role=USER, content="Where is the BM25 index stored?")]
 responses = mem.run_nonstream(messages, force_search=True)
 print(responses[-1].content)
 ```
 
-### Kubernetes agent (LEANN RAG)
+### Kubernetes agent
 
-Kubernetes Q&A agent using LEANN over the [Kubernetes Q&A dataset](https://huggingface.co/datasets/kcanbora/kubernetes-q-a):
+Kubernetes Q&A agent over the [Kubernetes Q&A dataset](https://huggingface.co/datasets/kcanbora/kubernetes-q-a):
 
 ```bash
   pip install "cat-agent[rag]"
@@ -356,6 +397,8 @@ bot = Assistant(
 | `cat_agent.log` | Loguru-based structured logging |
 | `cat_agent.observability` | Run/node/LLM/tool event hooks and handlers (incl. Mermaid, OpenTelemetry) |
 | `cat_agent.settings` | Configuration via environment variables |
+| `native` | PyO3 persistent BM25 index and experimental PDF text parser; Python remains the public API |
+| `benchmarks` | Repeatable RAG index and token-accounting micro-benchmarks |
 
 ## Testing
 
@@ -363,10 +406,16 @@ bot = Assistant(
 - **Test coverage:** **59%** (6,038 lines total).
 - **Run tests:** `pytest` (install with `pip install -e ".[test]"`).
 - **Report coverage:** `pytest --cov=cat_agent --cov-report=term`
+- **Native checks:** `cargo test --manifest-path native/Cargo.toml --no-default-features`
+- **RAG benchmark:** `python benchmarks/benchmark_rag.py --chunks 1000 --queries 25`
+- **PDF benchmark:** `python benchmarks/benchmark_pdf_parser.py --pages 10 --repeats 3`
 
 ## Versioning
+
+```bash
     chmod +x release.sh        # one time
     ./release.sh 0.1.2         # or any new X.Y.Z version
+```
 
 ## License
 

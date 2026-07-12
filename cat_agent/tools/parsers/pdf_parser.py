@@ -1,6 +1,7 @@
 """PDF document parser using pdfminer + pdfplumber."""
 
 from collections import Counter
+from importlib import import_module
 from typing import List
 
 from cat_agent.tools.parsers.base import clean_paragraph
@@ -44,6 +45,25 @@ def parse_pdf(pdf_path: str, extract_image: bool = False) -> List[dict]:
         doc.append(page)
 
     return doc
+
+
+def parse_pdf_native(pdf_path: str, extract_image: bool = False) -> List[dict]:
+    """Extract page text with the optional Rust prototype.
+
+    This backend intentionally handles text only. The default pdfminer/
+    pdfplumber parser remains authoritative for tables, images, font metadata,
+    and layout-sensitive extraction.
+    """
+    if extract_image:
+        raise ValueError('The native PDF prototype does not support extracting images.')
+    native = import_module('cat_agent._native')
+    return [
+        {
+            'page_num': page_number,
+            'content': [{'text': clean_paragraph(text)}] if text.strip() else [],
+        }
+        for page_number, text in native.parse_pdf_text(pdf_path)
+    ]
 
 
 # ---------------------------------------------------------------------------

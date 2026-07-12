@@ -105,48 +105,6 @@ class TestMemoryInit:
 
         assert mem.system_files == []
 
-    # -- LEANN toggle --
-
-    @patch("cat_agent.memory.memory.Agent.__init__", return_value=None)
-    def test_enable_leann_adds_searcher(self, _agent_init, mock_llm):
-        cfg = {
-            "rag_searchers": ["keyword_search", "front_page_search"],
-            "enable_leann": True,
-        }
-        mem = Memory(llm=mock_llm, rag_cfg=cfg)
-
-        assert "leann_search" in mem.rag_searchers
-
-    @patch("cat_agent.memory.memory.Agent.__init__", return_value=None)
-    def test_enable_leann_does_not_duplicate(self, _agent_init, mock_llm):
-        cfg = {
-            "rag_searchers": ["keyword_search", "leann_search"],
-            "enable_leann": True,
-        }
-        mem = Memory(llm=mock_llm, rag_cfg=cfg)
-
-        assert mem.rag_searchers.count("leann_search") == 1
-
-    @patch("cat_agent.memory.memory.Agent.__init__", return_value=None)
-    def test_disable_leann_removes_searcher(self, _agent_init, mock_llm):
-        cfg = {
-            "rag_searchers": ["keyword_search", "leann_search", "front_page_search"],
-            "enable_leann": False,
-        }
-        mem = Memory(llm=mock_llm, rag_cfg=cfg)
-
-        assert "leann_search" not in mem.rag_searchers
-        assert "keyword_search" in mem.rag_searchers
-        assert "front_page_search" in mem.rag_searchers
-
-    @patch("cat_agent.memory.memory.Agent.__init__", return_value=None)
-    def test_leann_none_leaves_searchers_unchanged(self, _agent_init, mock_llm):
-        searchers = ["keyword_search", "front_page_search"]
-        cfg = {"rag_searchers": searchers}
-        mem = Memory(llm=mock_llm, rag_cfg=cfg)
-
-        assert mem.rag_searchers == searchers
-
     # -- Agent.__init__ call --
 
     def test_agent_init_called_with_retrieval_and_doc_parser(self, mock_llm):

@@ -1,0 +1,3 @@
+Cat-Agent uses a mandatory Rust BM25 index for keyword retrieval.
+The index is persisted under workspace/storage/keyword_indexes/ and reused across runs.
+Python remains the public API for agents, tools, and document records.

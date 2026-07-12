@@ -211,30 +211,31 @@ class QWenTokenizer:
         return self.tokenizer.decode(token_ids, errors=errors or self.errors)
 
     def encode(self, text: str) -> List[int]:
-        return self.convert_tokens_to_ids(self.tokenize(text))
+        text = unicodedata.normalize('NFC', text)
+        return self.tokenizer.encode(text, allowed_special='all', disallowed_special=())
 
     def count_tokens(self, text: str) -> int:
-        return len(self.tokenize(text))
+        return len(self.encode(text))
 
     def truncate(self, text: str, max_token: int, start_token: int = 0, keep_both_sides: bool = False) -> str:
-        token_list = self.tokenize(text)[start_token:]
-        if len(token_list) <= max_token:
-            return self.convert_tokens_to_string(token_list)
+        token_ids = self.encode(text)[start_token:]
+        if len(token_ids) <= max_token:
+            return self._decode(token_ids)
 
         if keep_both_sides:
-            ellipsis_tokens = self.tokenize("...")
+            ellipsis_tokens = self.encode("...")
             ellipsis_len = len(ellipsis_tokens)
             available = max_token - ellipsis_len
             if available <= 0: # Degenerate case: not enough space even for "..."
-                return self.convert_tokens_to_string(token_list[:max_token])
+                return self._decode(token_ids[:max_token])
 
             left_len = available // 2
             right_len = available - left_len
-            token_list = token_list[:left_len] + ellipsis_tokens + token_list[-right_len:]
+            token_ids = token_ids[:left_len] + ellipsis_tokens + token_ids[-right_len:]
         else:
-            token_list = token_list[:max_token]
+            token_ids = token_ids[:max_token]
 
-        return self.convert_tokens_to_string(token_list)
+        return self._decode(token_ids)
 
 
 tokenizer = QWenTokenizer(Path(__file__).resolve().parent / 'qwen.tiktoken')

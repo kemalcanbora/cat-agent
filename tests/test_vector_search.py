@@ -76,3 +76,19 @@ class TestVectorSearch:
             with patch("os.getenv", return_value="fake_key"):
                 out = search.sort_by_scores("plain query", [rec])
         assert out == []
+
+    def test_reuses_index_for_unchanged_corpus(self):
+        chunk = Chunk(content="content", metadata={"source": "u", "chunk_id": 0}, token=1)
+        rec = Record(url="u", raw=[chunk], title="T")
+        search = VectorSearch()
+        mock_faiss = MagicMock()
+        mock_doc = MagicMock()
+        mock_doc.page_content = "content"
+        fake_modules = _make_fake_langchain_modules(mock_faiss, mock_doc)
+
+        with patch.dict(sys.modules, fake_modules):
+            with patch("os.getenv", return_value="fake_key"):
+                search.sort_by_scores("first query", [rec])
+                search.sort_by_scores("second query", [rec])
+
+        mock_faiss.from_documents.assert_called_once()

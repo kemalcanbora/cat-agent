@@ -1,6 +1,7 @@
 """Tests for cat_agent.tools.search_tools.keyword_search."""
 
-from unittest.mock import patch
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -92,13 +93,72 @@ class TestKeywordSearch:
             out = search.sort_by_scores(query="the and a", docs=[rec])
         assert out == []
 
-    def test_sort_by_scores_with_bm25(self):
-        pytest.importorskip("rank_bm25")
-        search = KeywordSearch()
+    def test_sort_by_scores_with_bm25(self, tmp_path):
+        search = KeywordSearch({"keyword_index_path": str(tmp_path / "index.json")})
         c1 = Chunk(content="machine learning", metadata={"source": "u", "chunk_id": 0}, token=2)
         c2 = Chunk(content="python programming", metadata={"source": "u", "chunk_id": 1}, token=2)
         rec = Record(url="u", raw=[c1, c2], title="T")
-        out = search.sort_by_scores(query="machine", docs=[rec])
+        index = MagicMock()
+        index.scores.return_value = [1.0, 0.0]
+        index.save.side_effect = lambda path: Path(path).write_text("{}", encoding="utf-8")
+        native = MagicMock()
+        native.RagIndex.return_value = index
+
+        with patch("cat_agent.tools.search_tools.keyword_search.import_module", return_value=native):
+            out = search.sort_by_scores(query="machine", docs=[rec])
+
         assert len(out) == 2
         assert all(len(t) == 3 for t in out)
         assert out[0][2] >= out[1][2]
+
+    def test_reuses_index_for_unchanged_corpus(self, tmp_path):
+        search = KeywordSearch({"keyword_index_path": str(tmp_path / "index.json")})
+        c1 = Chunk(content="machine learning", metadata={"source": "u", "chunk_id": 0}, token=2)
+        c2 = Chunk(content="python programming", metadata={"source": "u", "chunk_id": 1}, token=2)
+        rec = Record(url="u", raw=[c1, c2], title="T")
+        index = MagicMock()
+        index.scores.return_value = [1.0, 0.0]
+        index.save.side_effect = lambda path: Path(path).write_text("{}", encoding="utf-8")
+        native = MagicMock()
+        native.RagIndex.return_value = index
+
+        with patch("cat_agent.tools.search_tools.keyword_search.import_module", return_value=native):
+            search.sort_by_scores(query="machine", docs=[rec])
+            search.sort_by_scores(query="python", docs=[rec])
+
+        native.RagIndex.assert_called_once()
+        assert index.scores.call_count == 2
+
+    def test_reuses_persisted_index_across_instances(self, tmp_path):
+        index_path = tmp_path / "index.json"
+        cfg = {"keyword_index_path": str(index_path)}
+        chunk = Chunk(content="machine learning", metadata={"source": "u", "chunk_id": 0}, token=2)
+        rec = Record(url="u", raw=[chunk], title="T")
+        built_index = MagicMock()
+        built_index.scores.return_value = [1.0]
+        built_index.save.side_effect = lambda path: Path(path).write_text("{}", encoding="utf-8")
+        loaded_index = MagicMock()
+        loaded_index.scores.return_value = [1.0]
+        native = MagicMock()
+        native.RagIndex.return_value = built_index
+        native.RagIndex.load.return_value = loaded_index
+
+        with patch("cat_agent.tools.search_tools.keyword_search.import_module", return_value=native):
+            KeywordSearch(cfg).sort_by_scores(query="machine", docs=[rec])
+            KeywordSearch(cfg).sort_by_scores(query="machine", docs=[rec])
+
+        native.RagIndex.assert_called_once()
+        native.RagIndex.load.assert_called_once_with(str(index_path))
+        loaded_index.scores.assert_called_once()
+
+    def test_missing_native_extension_raises_clear_error(self):
+        search = KeywordSearch()
+        chunk = Chunk(content="machine learning", metadata={"source": "u", "chunk_id": 0}, token=2)
+        rec = Record(url="u", raw=[chunk], title="T")
+
+        with patch(
+            "cat_agent.tools.search_tools.keyword_search.import_module",
+            side_effect=ImportError,
+        ):
+            with pytest.raises(ImportError, match="native Rust extension"):
+                search.sort_by_scores(query="machine", docs=[rec])

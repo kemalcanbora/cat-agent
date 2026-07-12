@@ -3,7 +3,7 @@ set -euo pipefail
 
 #
 # Simple helper script to cut a new release:
-# - updates cat_agent/__init__.py __version__
+# - updates cat_agent/__init__.py and native/Cargo.toml versions
 # - commits the change
 # - creates a git tag v<version>
 # - pushes commit and tag to origin (which triggers the GitHub release workflow)
@@ -34,7 +34,7 @@ if git rev-parse "v${NEW_VERSION}" >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "Bumping version to ${NEW_VERSION} in cat_agent/__init__.py"
+echo "Bumping version to ${NEW_VERSION} in Python and Rust manifests"
 
 PYTHON_BIN="${PYTHON_BIN:-python3.10}"
 if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
@@ -61,9 +61,21 @@ new_text, count = re.subn(
 if count == 0:
     raise SystemExit("Could not find __version__ assignment in cat_agent/__init__.py")
 path.write_text(new_text, encoding="utf-8")
+
+cargo_path = Path("native/Cargo.toml")
+cargo_text = cargo_path.read_text(encoding="utf-8")
+cargo_text, count = re.subn(
+    r'(?m)^(version\s*=\s*)["\'][^"\']*["\']',
+    rf'\1"{new_version}"',
+    cargo_text,
+    count=1,
+)
+if count == 0:
+    raise SystemExit("Could not find package version in native/Cargo.toml")
+cargo_path.write_text(cargo_text, encoding="utf-8")
 PY
 
-git add cat_agent/__init__.py
+git add cat_agent/__init__.py native/Cargo.toml
 git commit -m "chore: release ${NEW_VERSION}"
 
 git tag "v${NEW_VERSION}"
