@@ -1,4 +1,11 @@
-"""Benchmark native document chunking."""
+"""Benchmark native document chunking.
+
+Run after installing the RAG dependencies:
+
+    python benchmarks/benchmark_native_chunking.py --pages 20 --paragraphs 10 --repeats 5
+
+Build the native extension with ``maturin develop`` before running.
+"""
 
 from __future__ import annotations
 

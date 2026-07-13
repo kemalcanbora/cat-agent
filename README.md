@@ -247,156 +247,6 @@ Each event includes `trace_id`, `run_id`, `span_id`, agent name/class, and a typ
   python examples/observability/observability_example.py
 ```
 
-## Examples
-
-### Math tool with LlamaCpp
-
-Registers a custom `sum_two_number` tool and uses a local GGUF model:
-
-```bash
-  python examples/llama_cpp_math_guy/llama_cpp_example.py
-```
-
-### Math tool with Transformers
-
-Same concept using the HuggingFace Transformers backend (Qwen3-1.7B):
-
-```bash
-  python examples/transformers_math_guy/math_guy.py
-```
-
-### Math tool with MLX-LM (Apple silicon, optional)
-
-Same concept using the MLX-LM backend (requires the optional `mlx` extra):
-
-```bash
-  pip install 'cat-agent[mlx]'
-  python examples/mlx_lm_math_guy/math_guy.py
-```
-
-### Vision with LlamaCpp
-
-Analyse images from URLs using a multimodal GGUF model (Qwen2-VL):
-
-```bash
-  python examples/llama_cpp_vision/llama_cpp_vision_example.py
-```
-
-### Document parsing agent
-
-Parse CSV/PDF/DOCX files and ask questions about their contents:
-
-```bash
-  python examples/doc_parser_agent/doc_parser_example.py
-```
-
-### Multi-agent: GroupChat
-
-Two agents (Alice and Bob) converse in round-robin to plan a weekend trip:
-
-```bash
-  python examples/multi_agent/group_chat_example.py
-```
-
-### Multi-agent: Router
-
-Intelligently route queries to specialised agents (MathExpert vs GeneralAssistant):
-
-```bash
-  python examples/multi_agent/router_example.py
-```
-
-### Graph workflow (DAG)
-
-Route between a math agent and a general chat agent via a `StateGraph`, with optional node tracing and a Mermaid diagram:
-
-```bash
-  python examples/graph/math_guy.py
-  GRAPH_TRACE=1 python examples/graph/math_guy.py   # print node trace + write graph_dag.mmd
-```
-
-### Rust keyword search
-
-Retrieval-augmented generation using the mandatory Rust-backed BM25 index:
-
-```bash
-  pip install cat-agent[rag]
-  python examples/rag_keyword/keyword_qwen3_demo.py
-```
-
-Low-level index build/query demo (no LLM):
-
-```bash
-  python examples/rag_keyword/rust_keyword_search_demo.py
-```
-
-Native HNSW vector search (hash embeddings by default):
-
-```bash
-  python examples/rag_vector/native_vector_search_demo.py
-```
-
-End-to-end native chunking + vector search + truncation:
-
-```bash
-  python examples/rag_native/native_rag_pipeline_demo.py
-```
-
-Minimal RAG usage in code:
-
-```python
-from cat_agent.llm.schema import Message, USER
-from cat_agent.memory import Memory
-import torch
-
-llm_cfg = {
-    "model": "Qwen/Qwen3-1.7B",
-    "model_type": "transformers",
-    "device": "cuda:0" if torch.cuda.is_available() else "cpu",
-}
-
-mem = Memory(
-    llm=llm_cfg,
-    files=["doc.txt"],
-    rag_cfg={"rag_searchers": ["keyword_search"], "rebuild_rag": False},
-)
-messages = [Message(role=USER, content="Where is the BM25 index stored?")]
-responses = mem.run_nonstream(messages, force_search=True)
-print(responses[-1].content)
-```
-
-### Kubernetes agent
-
-Kubernetes Q&A agent over the [Kubernetes Q&A dataset](https://huggingface.co/datasets/kcanbora/kubernetes-q-a):
-
-```bash
-  pip install "cat-agent[rag]"
-  pip install datasets
-  python examples/kubernetes_agent/build_kubernetes_qa_corpus.py   # once
-  python examples/kubernetes_agent/kubernetes_agent_example.py
-```
-
-See `examples/kubernetes_agent/README.md` for details.
-
-### WASM code interpreter
-
-Secure Python code execution in a WebAssembly sandbox (no Docker or Node.js needed):
-
-```bash
-  python examples/wasm_code_interpreter/wasm_code_interpreter_example.py
-```
-
-### Logging demo
-
-Demonstrates coloured console logs, JSON output, and file logging alongside an agent:
-
-```bash
-  python examples/logging_demo/logging_example.py
-
-  # Or with env-var driven config:
-  CAT_AGENT_LOG_LEVEL=DEBUG python examples/logging_demo/logging_example.py
-```
-
 ## LLM Backends
 
 | Backend | `model_type` | Description |
@@ -432,6 +282,7 @@ bot = Assistant(
 | `cat_agent.observability` | Run/node/LLM/tool event hooks and handlers (incl. Mermaid, OpenTelemetry) |
 | `cat_agent.settings` | Configuration via environment variables |
 | `native` | PyO3 persistent BM25 index and experimental PDF text parser; Python remains the public API |
+| `examples` | Runnable demos (agents, RAG, graph workflows, observability, code interpreter) |
 | `benchmarks` | Repeatable RAG index and token-accounting micro-benchmarks |
 
 ## Testing
@@ -441,8 +292,11 @@ bot = Assistant(
 - **Run tests:** `pytest` (install with `pip install -e ".[test]"`).
 - **Report coverage:** `pytest --cov=cat_agent --cov-report=term`
 - **Native checks:** `cargo test --manifest-path native/Cargo.toml --no-default-features`
-- **RAG benchmark:** `python benchmarks/benchmark_rag.py --chunks 1000 --queries 25`
+- **BM25 benchmark:** `python benchmarks/benchmark_rag.py --chunks 1000 --queries 25`
 - **PDF benchmark:** `python benchmarks/benchmark_pdf_parser.py --pages 10 --repeats 3`
+- **Chunking benchmark:** `python benchmarks/benchmark_native_chunking.py --pages 20 --paragraphs 10`
+- **Vector benchmark:** `python benchmarks/benchmark_native_vector.py --chunks 2000 --queries 25`
+- **Truncation benchmark:** `python benchmarks/benchmark_native_truncation.py --turns 40 --max-tokens 2048`
 
 ## Versioning
 
