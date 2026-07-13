@@ -12,7 +12,6 @@
 
 import json
 import os
-import re
 import time
 from typing import Dict, List, Optional, Union
 
@@ -23,8 +22,21 @@ from cat_agent.settings import DEFAULT_MAX_REF_TOKEN, DEFAULT_PARSER_PAGE_SIZE, 
 from cat_agent.tools.base import BaseTool, register_tool
 from cat_agent.tools.simple_doc_parser import PARAGRAPH_SPLIT_SYMBOL, SimpleDocParser, get_plain_doc
 from cat_agent.tools.storage import KeyNotExistsError, Storage
-from cat_agent.utils.tokenization_qwen import count_tokens, tokenizer
+from cat_agent.utils.tokenization_qwen import count_tokens, ensure_qwen_tokenizer
 from cat_agent.utils.utils import get_basename_from_url, hash_sha256
+
+
+def _native():
+    from importlib import import_module
+
+    try:
+        return import_module('cat_agent._native')
+    except ImportError as error:
+        raise ImportError(
+            'DocParser chunking requires the cat_agent native Rust extension. '
+            'Install a platform wheel or build it with: '
+            '`maturin develop --manifest-path native/Cargo.toml`'
+        ) from error
 
 
 class Chunk(BaseModel):
@@ -152,156 +164,19 @@ class DocParser(BaseTool):
                            path: str,
                            title: str = '',
                            parser_page_size: int = DEFAULT_PARSER_PAGE_SIZE) -> List[Chunk]:
-        res = []
-        chunk = []
-        available_token = parser_page_size
-        has_para = False
-        for page in doc:
-            page_num = page['page_num']
-            if not chunk or f'[page: {str(page_num)}]' != chunk[0]:
-                chunk.append(f'[page: {str(page_num)}]')
-            idx = 0
-            len_para = len(page['content'])
-            while idx < len_para:
-                if not chunk:
-                    chunk.append(f'[page: {str(page_num)}]')
-                para = page['content'][idx]
-                txt = para.get('text', para.get('table'))
-                token = para['token']
-                if token <= available_token:
-                    available_token -= token
-                    chunk.append([txt, page_num])
-                    has_para = True
-                    idx += 1
-                else:
-                    if has_para:
-                        # Record one chunk
-                        if isinstance(chunk[-1], str) and re.fullmatch(r'^\[page: \d+\]$', chunk[-1]) is not None:
-                            chunk.pop()  # Redundant page information
-                        res.append(
-                            Chunk(content=PARAGRAPH_SPLIT_SYMBOL.join(
-                                [x if isinstance(x, str) else x[0] for x in chunk]),
-                                  metadata={
-                                      'source': path,
-                                      'title': title,
-                                      'chunk_id': len(res)
-                                  },
-                                  token=parser_page_size - available_token))
-
-                        # Define new chunk
-                        overlap_txt = self._get_last_part(chunk)
-                        if overlap_txt.strip():
-                            chunk = [f'[page: {str(chunk[-1][1])}]', overlap_txt]
-                            has_para = False
-                            available_token = parser_page_size - count_tokens(overlap_txt)
-                        else:
-                            chunk = []
-                            has_para = False
-                            available_token = parser_page_size
-                    else:
-                        # There are excessively long paragraphs present
-                        # Split paragraph to sentences
-                        _sentences = re.split(r'\. |。', txt)
-                        sentences = []
-                        for s in _sentences:
-                            token = count_tokens(s)
-                            if not s.strip() or token == 0:
-                                continue
-                            if token <= available_token:
-                                sentences.append([s, token])
-                            else:
-                                # Limit the length of a sentence to chunk size
-                                token_list = tokenizer.tokenize(s)
-                                for si in range(0, len(token_list), available_token):
-                                    ss = tokenizer.convert_tokens_to_string(
-                                        token_list[si:min(len(token_list), si + available_token)])
-                                    sentences.append([ss, min(available_token, len(token_list) - si)])
-                        sent_index = 0
-                        while sent_index < len(sentences):
-                            s = sentences[sent_index][0]
-                            token = sentences[sent_index][1]
-                            if not chunk:
-                                chunk.append(f'[page: {str(page_num)}]')
-
-                            if token <= available_token or (not has_para):
-                                # Be sure to add at least one sentence
-                                # (not has_para) is a patch of the previous sentence splitting
-                                available_token -= token
-                                chunk.append([s, page_num])
-                                has_para = True
-                                sent_index += 1
-                            else:
-                                assert has_para
-                                if isinstance(chunk[-1], str) and re.fullmatch(r'^\[page: \d+\]$',
-                                                                               chunk[-1]) is not None:
-                                    chunk.pop()  # Redundant page information
-                                res.append(
-                                    Chunk(content=PARAGRAPH_SPLIT_SYMBOL.join(
-                                        [x if isinstance(x, str) else x[0] for x in chunk]),
-                                          metadata={
-                                              'source': path,
-                                              'title': title,
-                                              'chunk_id': len(res)
-                                          },
-                                          token=parser_page_size - available_token))
-
-                                overlap_txt = self._get_last_part(chunk)
-                                if overlap_txt.strip():
-                                    chunk = [f'[page: {str(chunk[-1][1])}]', overlap_txt]
-                                    has_para = False
-                                    available_token = parser_page_size - count_tokens(overlap_txt)
-                                else:
-                                    chunk = []
-                                    has_para = False
-                                    available_token = parser_page_size
-                        # Has split this paragraph by sentence
-                        idx += 1
-        if has_para:
-            if isinstance(chunk[-1], str) and re.fullmatch(r'^\[page: \d+\]$', chunk[-1]) is not None:
-                chunk.pop()  # Redundant page information
-            res.append(
-                Chunk(content=PARAGRAPH_SPLIT_SYMBOL.join([x if isinstance(x, str) else x[0] for x in chunk]),
-                      metadata={
-                          'source': path,
-                          'title': title,
-                          'chunk_id': len(res)
-                      },
-                      token=parser_page_size - available_token))
-
-        return res
-
-    def _get_last_part(self, chunk: list) -> str:
-        overlap = ''
-        need_page = chunk[-1][1]  # Only need this page to prepend
-        available_len = 150
-        for i in range(len(chunk) - 1, -1, -1):
-            if not (isinstance(chunk[i], list) and len(chunk[i]) == 2):
-                continue
-            if chunk[i][1] != need_page:
-                return overlap
-            para = chunk[i][0]
-            if len(para) <= available_len:
-                if overlap:
-                    overlap = f'{para}{PARAGRAPH_SPLIT_SYMBOL}{overlap}'
-                else:
-                    overlap = f'{para}'
-                available_len -= len(para)
-                continue
-            sentence_split_symbol = '. '
-            if '。' in para:
-                sentence_split_symbol = '。'
-            sentences = re.split(r'\. |。', para)
-            sentences = [sentence.strip() for sentence in sentences if sentence]
-            for j in range(len(sentences) - 1, -1, -1):
-                sent = sentences[j]
-                if not sent.strip():
-                    continue
-                if len(sent) <= available_len:
-                    if overlap:
-                        overlap = f'{sent}{sentence_split_symbol}{overlap}'
-                    else:
-                        overlap = f'{sent}'
-                    available_len -= len(sent)
-                else:
-                    return overlap
-        return overlap
+        ensure_qwen_tokenizer()
+        native_chunks = _native().split_doc_to_chunks(
+            doc,
+            path,
+            title,
+            parser_page_size,
+            PARAGRAPH_SPLIT_SYMBOL,
+        )
+        return [
+            Chunk(
+                content=item['content'],
+                metadata=item['metadata'],
+                token=item['token'],
+            )
+            for item in native_chunks
+        ]

@@ -159,3 +159,23 @@ class TestTruncateInputMessagesRoughly:
         assert result[0].role == SYSTEM
         assert result[1].content == "Hi"
         assert result[2].content == "Hello"
+
+    def test_over_budget_truncates_via_native_path(self):
+        pytest.importorskip("cat_agent._native")
+        from cat_agent.utils.tokenization_qwen import count_tokens, ensure_qwen_tokenizer
+
+        ensure_qwen_tokenizer()
+        messages = [
+            Message(role=SYSTEM, content="You are helpful."),
+            Message(role=USER, content="Brief question."),
+            Message(role=ASSISTANT, content="Brief answer."),
+            Message(role=USER, content="word " * 2500),
+        ]
+        result = truncate_input_messages_roughly(messages, max_tokens=128)
+        total = 0
+        for msg in result:
+            text = msg.content if isinstance(msg.content, str) else " ".join(
+                item.text for item in msg.content if getattr(item, "text", None)
+            )
+            total += count_tokens(text)
+        assert total <= 128

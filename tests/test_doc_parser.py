@@ -80,10 +80,3 @@ class TestDocParser:
         chunks = p.split_doc_to_chunk(doc, path="x", title="T", parser_page_size=100)
         assert len(chunks) >= 1
         assert "[page:" in chunks[0].content or "Page one" in chunks[0].content
-
-    def test_get_last_part_returns_overlap_from_same_page(self, doc_parser_path):
-        with patch("cat_agent.tools.doc_parser.Storage"):
-            p = DocParser({"path": doc_parser_path})
-        chunk = ["[page: 1]", ["First sentence.", 1], ["Last part.", 1]]
-        overlap = p._get_last_part(chunk)
-        assert "Last part" in overlap or "First" in overlap

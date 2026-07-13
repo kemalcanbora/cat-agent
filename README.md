@@ -22,7 +22,7 @@
 - **Agent workflows** — `Agent`, `Assistant`, `ReActChat`, `FnCallAgent`, `DocQAAgent`, `GroupChat`, `Router`, and more
 - **Graph workflows (DAG)** — Compose agents and tools into branching/looping graphs with `StateGraph`; a compiled graph is itself an `Agent`
 - **Function calling** — Native tool/function support for LLMs
-- **RAG** — Retrieval-augmented generation with vector, keyword, and hybrid search
+- **RAG** — Native keyword (BM25), vector (HNSW), and hybrid search; no LangChain/FAISS/LEANN
 - **Code interpreter** — Safe Python execution via Docker or WASM sandbox (no Docker required)
 - **Rich tool set** — Web search, doc parsing, image generation, MCP, storage, and extensible custom tools
 - **Multiple LLM backends** — Transformers (default local/GPU), OpenAI-compatible APIs, LlamaCpp (+ vision), OpenVINO; MLX-LM optional on Apple silicon
@@ -70,8 +70,10 @@ and optionally runs an example. CI uses the same script in the `consumer-install
 Released platform wheels include the native Rust stack used by RAG:
 
 - **BM25 index** for `KeywordSearch`
+- **HNSW vector index** for `VectorSearch` (usearch; hash or ONNX embeddings)
 - **Keyword tokenization** (English stemming + Chinese segmentation via `jieba-rs`)
-- **Qwen token counting** via `tiktoken-rs`
+- **Qwen token counting / truncation / document chunking**
+- **LLM input truncation** before each model call
 - **PDF text extraction** for `.pdf` ingestion
 
 There are no Python fallbacks for these paths. Installing a published wheel does
@@ -86,6 +88,19 @@ of rebuilding and re-tokenizing it for every query. The index is persisted under
 
 The Rust PDF parser is text-only. It does not preserve tables, images, or
 layout metadata the way the old Python pdfminer/pdfplumber stack did.
+
+### RAG search backends
+
+Configured via `rag_searchers` (default: `keyword_search` + `front_page_search`):
+
+| Searcher | Backend | Notes |
+|---|---|---|
+| `keyword_search` | Rust BM25 | Default; persistent index on disk |
+| `vector_search` | Rust HNSW (usearch) | Hash embeddings by default; optional ONNX via `[rag]` |
+| `front_page_search` | Heuristic | Boosts first chunks when the doc fits in context |
+| `hybrid_search` | Fusion | Used automatically when multiple searchers are configured |
+
+Removed backends: **LEANN**, LangChain, FAISS, and OpenAI embedding APIs are no longer used.
 
 ## Logging
 
@@ -313,6 +328,18 @@ Low-level index build/query demo (no LLM):
 
 ```bash
   python examples/rag_keyword/rust_keyword_search_demo.py
+```
+
+Native HNSW vector search (hash embeddings by default):
+
+```bash
+  python examples/rag_vector/native_vector_search_demo.py
+```
+
+End-to-end native chunking + vector search + truncation:
+
+```bash
+  python examples/rag_native/native_rag_pipeline_demo.py
 ```
 
 Minimal RAG usage in code:

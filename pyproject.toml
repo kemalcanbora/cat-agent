@@ -47,6 +47,7 @@ rag = [
     "fastexcel",
     "pyarrow==17.0.0",
     "tabulate",
+    "onnxruntime>=1.17.0",
 ]
 mcp = ["mcp"]
 otel = [

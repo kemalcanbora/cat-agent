@@ -218,33 +218,31 @@ class QWenTokenizer:
         return count_tokens(text)
 
     def truncate(self, text: str, max_token: int, start_token: int = 0, keep_both_sides: bool = False) -> str:
-        token_ids = self.encode(text)[start_token:]
-        if len(token_ids) <= max_token:
-            return self._decode(token_ids)
-
-        if keep_both_sides:
-            ellipsis_tokens = self.encode("...")
-            ellipsis_len = len(ellipsis_tokens)
-            available = max_token - ellipsis_len
-            if available <= 0: # Degenerate case: not enough space even for "..."
-                return self._decode(token_ids[:max_token])
-
-            left_len = available // 2
-            right_len = available - left_len
-            token_ids = token_ids[:left_len] + ellipsis_tokens + token_ids[-right_len:]
-        else:
-            token_ids = token_ids[:max_token]
-
-        return self._decode(token_ids)
+        if start_token:
+            text = self._decode(self.encode(text)[start_token:])
+        return truncate_tokens(text, max_token, keep_both_sides=keep_both_sides)
 
 
 tokenizer = QWenTokenizer(Path(__file__).resolve().parent / 'qwen.tiktoken')
 
 
-def count_tokens(text: str) -> int:
-    from cat_agent._native import count_qwen_tokens, init_qwen_tokenizer
+def ensure_qwen_tokenizer() -> None:
+    from cat_agent._native import init_qwen_tokenizer
 
-    if not getattr(count_tokens, '_initialized', False):
+    if not getattr(ensure_qwen_tokenizer, '_initialized', False):
         init_qwen_tokenizer(str(Path(__file__).resolve().parent / 'qwen.tiktoken'))
-        count_tokens._initialized = True
+        ensure_qwen_tokenizer._initialized = True
+
+
+def count_tokens(text: str) -> int:
+    from cat_agent._native import count_qwen_tokens
+
+    ensure_qwen_tokenizer()
     return count_qwen_tokens(text)
+
+
+def truncate_tokens(text: str, max_token: int, keep_both_sides: bool = False) -> str:
+    from cat_agent._native import truncate_qwen_text
+
+    ensure_qwen_tokenizer()
+    return truncate_qwen_text(text, max_token, keep_both_sides)

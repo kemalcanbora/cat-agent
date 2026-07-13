@@ -62,6 +62,12 @@ jobs:
       - name: Smoke test Rust keyword-search example
         run: python examples/rag_keyword/rust_keyword_search_demo.py
 
+      - name: Smoke test native vector-search example
+        run: python examples/rag_vector/native_vector_search_demo.py
+
+      - name: Smoke test native RAG pipeline example
+        run: python examples/rag_native/native_rag_pipeline_demo.py
+
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15

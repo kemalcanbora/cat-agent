@@ -83,6 +83,37 @@ def test_rust_qwen_token_count_matches_python_baseline():
     assert native.count_qwen_tokens(sample) == len(tokenizer.encode(sample))
 
 
+def test_rust_qwen_encode_decode_roundtrip():
+    from pathlib import Path
+
+    vocab = str(Path(__file__).resolve().parents[1] / "cat_agent/utils/qwen.tiktoken")
+    native.init_qwen_tokenizer(vocab)
+    sample = "Chunking and truncation share the same native tokenizer."
+    token_ids = native.encode_qwen_tokens(sample)
+    restored = native.decode_qwen_tokens(token_ids)
+    assert native.count_qwen_tokens(restored) == len(token_ids)
+
+
+def test_rust_doc_chunker_splits_pages(tmp_path):
+    from pathlib import Path
+
+    from cat_agent.utils.tokenization_qwen import count_tokens
+
+    vocab = str(Path(__file__).resolve().parents[1] / "cat_agent/utils/qwen.tiktoken")
+    native.init_qwen_tokenizer(vocab)
+    text_a = "First page paragraph."
+    text_b = "Second page paragraph."
+    doc = [
+        {"page_num": 1, "content": [{"text": text_a, "token": count_tokens(text_a)}]},
+        {"page_num": 2, "content": [{"text": text_b, "token": count_tokens(text_b)}]},
+    ]
+    chunks = native.split_doc_to_chunks(doc, "demo", "T", 32, "\n")
+    assert len(chunks) >= 1
+    joined = "\n".join(chunk["content"] for chunk in chunks)
+    assert "First page" in joined
+    assert "Second page" in joined
+
+
 def test_rust_pdf_extracts_page_text(tmp_path):
     path = tmp_path / "sample.pdf"
     path.write_bytes(_minimal_pdf("Hello native PDF"))
