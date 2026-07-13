@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use pyo3::exceptions::{PyIOError, PyValueError};
 use pyo3::prelude::*;
 use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
@@ -7,7 +5,6 @@ use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
 #[pyclass(module = "cat_agent._native", skip_from_py_object)]
 pub struct VectorIndex {
     dimensions: usize,
-    metric: String,
     index: Index,
     keys: Vec<u64>,
 }
@@ -50,7 +47,6 @@ impl VectorIndex {
         let index = Self::build_index(dimensions, metric)?;
         Ok(Self {
             dimensions,
-            metric: metric.to_string(),
             index,
             keys: Vec::new(),
         })
@@ -110,13 +106,12 @@ impl VectorIndex {
     #[staticmethod]
     #[pyo3(signature = (path, dimensions, metric = "cos"))]
     fn load(path: &str, dimensions: usize, metric: &str) -> PyResult<Self> {
-        let mut index = Self::build_index(dimensions, metric)?;
+        let index = Self::build_index(dimensions, metric)?;
         index
             .load(path)
             .map_err(|error| PyIOError::new_err(format!("failed to load vector index: {error}")))?;
         Ok(Self {
             dimensions,
-            metric: metric.to_string(),
             index,
             keys: Vec::new(),
         })
@@ -125,8 +120,4 @@ impl VectorIndex {
     fn __len__(&self) -> usize {
         self.keys.len()
     }
-}
-
-pub fn vector_index_exists(path: &str) -> bool {
-    Path::new(path).is_file()
 }

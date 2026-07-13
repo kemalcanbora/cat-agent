@@ -13,7 +13,7 @@ struct Paragraph {
 }
 
 #[derive(Clone, Debug)]
-struct Page {
+pub(crate) struct Page {
     page_num: i64,
     content: Vec<Paragraph>,
 }
@@ -25,7 +25,7 @@ enum ChunkPart {
 }
 
 #[derive(Clone, Debug)]
-struct ChunkOutput {
+pub(crate) struct ChunkOutput {
     content: String,
     source: String,
     title: String,
@@ -155,14 +155,18 @@ fn get_last_part(chunk: &[ChunkPart]) -> PyResult<String> {
     Ok(overlap)
 }
 
-fn finalize_chunk(
-    chunk: &[ChunkPart],
-    path: &str,
-    title: &str,
+struct FinalizeChunkParams<'a> {
+    path: &'a str,
+    title: &'a str,
     chunk_id: usize,
     parser_page_size: usize,
     available_token: usize,
-    paragraph_split_symbol: &str,
+    paragraph_split_symbol: &'a str,
+}
+
+fn finalize_chunk(
+    chunk: &[ChunkPart],
+    params: FinalizeChunkParams<'_>,
     results: &mut Vec<ChunkOutput>,
 ) -> PyResult<()> {
     let mut parts = chunk.to_vec();
@@ -177,13 +181,15 @@ fn finalize_chunk(
             ChunkPart::Paragraph { text, .. } => text.clone(),
         })
         .collect::<Vec<_>>()
-        .join(paragraph_split_symbol);
+        .join(params.paragraph_split_symbol);
     results.push(ChunkOutput {
         content,
-        source: path.to_string(),
-        title: title.to_string(),
-        chunk_id,
-        token: parser_page_size.saturating_sub(available_token),
+        source: params.path.to_string(),
+        title: params.title.to_string(),
+        chunk_id: params.chunk_id,
+        token: params
+            .parser_page_size
+            .saturating_sub(params.available_token),
     });
     Ok(())
 }
@@ -251,12 +257,14 @@ pub fn split_doc_to_chunks(
             } else if has_para {
                 finalize_chunk(
                     &chunk,
-                    path,
-                    title,
-                    results.len(),
-                    parser_page_size,
-                    available_token,
-                    paragraph_split_symbol,
+                    FinalizeChunkParams {
+                        path,
+                        title,
+                        chunk_id: results.len(),
+                        parser_page_size,
+                        available_token,
+                        paragraph_split_symbol,
+                    },
                     &mut results,
                 )?;
                 let overlap_txt = get_last_part(&chunk)?;
@@ -299,12 +307,14 @@ pub fn split_doc_to_chunks(
                     } else {
                         finalize_chunk(
                             &chunk,
-                            path,
-                            title,
-                            results.len(),
-                            parser_page_size,
-                            available_token,
-                            paragraph_split_symbol,
+                            FinalizeChunkParams {
+                                path,
+                                title,
+                                chunk_id: results.len(),
+                                parser_page_size,
+                                available_token,
+                                paragraph_split_symbol,
+                            },
                             &mut results,
                         )?;
                         let overlap_txt = get_last_part(&chunk)?;
@@ -338,12 +348,14 @@ pub fn split_doc_to_chunks(
     if has_para {
         finalize_chunk(
             &chunk,
-            path,
-            title,
-            results.len(),
-            parser_page_size,
-            available_token,
-            paragraph_split_symbol,
+            FinalizeChunkParams {
+                path,
+                title,
+                chunk_id: results.len(),
+                parser_page_size,
+                available_token,
+                paragraph_split_symbol,
+            },
             &mut results,
         )?;
     }

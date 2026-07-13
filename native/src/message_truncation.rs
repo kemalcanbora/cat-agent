@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use crate::qwen_tokenizer::{count_qwen_tokens, truncate_qwen_text};
 
 #[derive(Clone, Debug)]
-struct NativeMessage {
+pub(crate) struct NativeMessage {
     role: String,
     text: String,
     name: Option<String>,
@@ -39,6 +39,7 @@ fn parse_messages(messages: &Bound<'_, PyAny>) -> PyResult<Vec<NativeMessage>> {
     Ok(parsed)
 }
 
+#[allow(clippy::collapsible_if)]
 fn split_turn_into_steps(indexed_messages: &[IndexedMessage]) -> Vec<Vec<IndexedMessage>> {
     let mut steps: Vec<Vec<IndexedMessage>> = Vec::new();
     for indexed in indexed_messages {
@@ -218,7 +219,6 @@ fn truncate_turn(
         let token_count = count_qwen_tokens(&message.text)?;
         if token_count > exceedance {
             message.text = truncate_qwen_text(&message.text, token_count - exceedance, true)?;
-            exceedance = 0;
             break;
         }
         message.text = "omit".to_string();
