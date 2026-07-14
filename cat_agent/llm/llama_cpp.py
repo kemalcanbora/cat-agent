@@ -11,8 +11,8 @@ try:
 except ImportError as e:
     raise ImportError(
         "llama-cpp-python is required to use the llama_cpp backend.\n"
-        "Install it with: pip install llama-cpp-python\n"
-        "(add --extra-index-url for GPU/metal/...)") from e
+        'Install it with: pip install "cat-agent[llama]"'
+    ) from e
 
 
 @register_llm('llama_cpp')

@@ -69,6 +69,11 @@ def main() -> None:
     vectors = embedder.embed(texts)
     embed_ms = (time.perf_counter() - embed_started) * 1000
 
+    native_started = time.perf_counter()
+    from cat_agent._native import hash_embed as native_hash_embed
+    native_hash_embed(texts, args.dimensions)
+    native_only_ms = (time.perf_counter() - native_started) * 1000
+
     build_started = time.perf_counter()
     index = VectorIndex(args.dimensions, 'cos')
     index.add(list(range(len(vectors))), vectors)
@@ -96,6 +101,7 @@ def main() -> None:
     print(f'Corpus chunks: {args.chunks}')
     print(f'Embedding dimensions: {args.dimensions}')
     print(f'Hash embedding (all chunks): {embed_ms:.2f} ms')
+    print(f'Native hash_embed only: {native_only_ms:.2f} ms')
     print(f'HNSW index build: {build_ms:.2f} ms')
     print(
         f'HNSW search (top-{args.top_k}): mean={search_mean:.2f} ms '

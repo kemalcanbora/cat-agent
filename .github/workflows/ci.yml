@@ -104,7 +104,7 @@ jobs:
             echo "Error: no wheel found under dist/" >&2
             exit 1
           fi
-          python -m pip install --force-reinstall "${WHEEL}[test,rag,mcp,python_executor,code_interpreter]"
+          python -m pip install --force-reinstall "${WHEEL}[test,rag,mcp,python_executor,code_interpreter,transformers,llama,wasm]"
           ./scripts/sync_native_from_wheel.sh "${WHEEL}"
 
       - name: Run linting (optional)

@@ -202,7 +202,7 @@ class TestAgentCallTool:
         with patch.object(Agent, "_run", return_value=iter([])):
             agent = BasicAgent(llm=mock_llm)
         out = agent._call_tool("nonexistent")
-        assert out == "Tool nonexistent does not exists."
+        assert out == "Tool nonexistent does not exist."
 
     def test_tool_returns_str(self, mock_llm):
         tool = MagicMock()

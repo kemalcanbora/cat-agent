@@ -48,7 +48,7 @@ class MCPManager:
             self.loop_thread = threading.Thread(target=self.start_loop, daemon=True)
             self.loop_thread.start()
 
-            # A fallback way to terminate MCP tool processes after Qwen-Agent exits
+            # A fallback way to terminate MCP tool processes after Cat-Agent exits
             self.processes = []
             self.monkey_patch_mcp_create_platform_compatible_process()
 
@@ -56,10 +56,13 @@ class MCPManager:
         try:
             import mcp.client.stdio
             target = mcp.client.stdio._create_platform_compatible_process
-        except (ModuleNotFoundError, AttributeError) as e:
-            print(e)
-            raise ImportError('Qwen-Agent needs to monkey patch MCP for process cleanup. '
-                              'Please upgrade MCP to a higher version with `pip install -U mcp`.') from e
+        except (ModuleNotFoundError, AttributeError) as error:
+            logger.warning(
+                'MCP process cleanup hook unavailable ({}). '
+                'Install a compatible MCP version with `pip install "cat-agent[mcp]"`.',
+                error,
+            )
+            return
 
         async def _monkey_patched_create_platform_compatible_process(*args, **kwargs):
             process = await target(*args, **kwargs)

@@ -9,9 +9,8 @@ access by default — without requiring Docker or Node.js.
 Requirements:
     pip install wasmtime
 
-The WASI CPython binary and standard library are bundled under
-``cat_agent/tools/resource/wasm_runtime/`` — no extra downloads needed.
-You can override the runtime directory via the ``runtime_dir`` config key.
+The WASI CPython binary and standard library are downloaded on first use
+and cached under the workspace unless you set ``runtime_dir`` in the tool config.
 
 Limitations:
     - Only the Python **standard library** is available (no numpy/pandas/
@@ -36,8 +35,7 @@ from cat_agent.utils.utils import extract_code, has_chinese_chars
 # 400M fuel ≈ a few seconds of CPU work; raise for heavier tasks.
 DEFAULT_FUEL = 400_000_000
 
-# Bundled WASI CPython runtime shipped with the package.
-BUNDLED_RUNTIME_DIR = str(Path(__file__).absolute().parent / 'resource' / 'wasm_runtime')
+from cat_agent.tools.resource.wasm_runtime_loader import ensure_wasm_runtime
 
 
 # ---------------------------------------------------------------------------
@@ -187,10 +185,11 @@ class WasmCodeInterpreter(BaseTool):
 
     def __init__(self, cfg: Optional[Dict] = None):
         super().__init__(cfg)
-        self.runtime_dir: str = self.cfg.get('runtime_dir', BUNDLED_RUNTIME_DIR)
+        _check_wasmtime_available()
+        configured_dir = self.cfg.get('runtime_dir')
+        self.runtime_dir = ensure_wasm_runtime(configured_dir)
         self.fuel: int = self.cfg.get('fuel', DEFAULT_FUEL)
         self._runtime: Optional[WasmPythonRuntime] = None
-        _check_wasmtime_available()
 
     @property
     def args_format(self) -> str:
@@ -252,5 +251,5 @@ def _check_wasmtime_available():
     except ImportError:
         raise ImportError(
             'The wasmtime package is required for the WASM code interpreter. '
-            'Install it with: pip install wasmtime'
+            'Install it with: pip install "cat-agent[wasm]"'
         )

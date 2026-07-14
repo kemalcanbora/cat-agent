@@ -17,6 +17,29 @@
 
 **Cat-Agent** is a Python framework for building LLM-powered agents with pluggable tools, multi-agent workflows, and production-ready features. Use it to add function calling, RAG, code execution, and custom tools to your chat or automation pipelines.
 
+### Native Rust extension (`cat_agent._native`)
+
+Platform wheels ship a PyO3 extension that powers the performance-critical RAG
+and tokenization paths. Python remains the public API; there are **no fallbacks**
+for these components:
+
+| Module | Python entry points |
+|---|---|
+| BM25 index | `KeywordSearch`, `RagIndex` |
+| HNSW vector index | `VectorSearch`, `VectorIndex` |
+| Hash embeddings | `HashEmbedder`, `native.hash_embed` |
+| Tokenizer / truncation | `count_tokens`, `truncate_messages` |
+| Document chunking | `DocParser.split_doc_to_chunk` |
+| PDF text extraction | `.pdf` ingestion in `DocParser` |
+
+```python
+import cat_agent._native as native
+print(native.__version__)
+```
+
+Source installs build the extension via maturin; published wheels do not require
+a local Rust toolchain.
+
 ### Features
 
 - **Agent workflows** — `Agent`, `Assistant`, `ReActChat`, `FnCallAgent`, `DocQAAgent`, `GroupChat`, `Router`, and more
@@ -25,7 +48,7 @@
 - **RAG** — Native keyword (BM25), vector (HNSW), and hybrid search; no LangChain/FAISS/LEANN
 - **Code interpreter** — Safe Python execution via Docker or WASM sandbox (no Docker required)
 - **Rich tool set** — Web search, doc parsing, image generation, MCP, storage, and extensible custom tools
-- **Multiple LLM backends** — Transformers (default local/GPU), OpenAI-compatible APIs, LlamaCpp (+ vision), OpenVINO; MLX-LM optional on Apple silicon
+- **Multiple LLM backends** — OpenAI-compatible APIs (base install); Transformers, LlamaCpp, MLX-LM, OpenVINO via optional extras
 - **Structured logging** — Loguru-powered logging with coloured console, JSON, and file rotation support
 - **Observability hooks** — Structured run/node/LLM/tool events with pluggable handlers (callbacks, print, loguru, Mermaid, OpenTelemetry)
 
@@ -35,22 +58,32 @@
 
 ## Installation
 
-Requires **Python 3.10+**. Base install includes **Transformers**, **PyTorch**, and **Accelerate** for the default local/GPU backend. On zsh, quote extras:
+Requires **Python 3.10+**. The **base install is lightweight** (OpenAI-compatible
+API client, tools, agents, and the native Rust extension). Heavy local-model
+backends are optional extras. On zsh, quote extras:
 
 ```bash
   pip install cat-agent
   pip install 'cat-agent[rag]'
+  pip install 'cat-agent[transformers]'   # HuggingFace local/GPU models
+  pip install 'cat-agent[llama]'          # llama-cpp-python GGUF models
+  pip install 'cat-agent[wasm]'           # WASM code interpreter runtime
+  pip install 'cat-agent[local]'          # transformers + llama + wasm
 ```
 
 **Optional extras:**
 
 ```bash
-  pip install 'cat-agent[rag]'              # RAG (retrieval, doc parsing, etc.)
-  pip install 'cat-agent[mlx]'              # MLX-LM backend (Apple silicon only)
-  pip install 'cat-agent[mcp]'              # MCP (Model Context Protocol)
-  pip install 'cat-agent[python_executor]'    # Python executor (math, sympy, etc.)
-  pip install 'cat-agent[code_interpreter]' # Code interpreter server (Jupyter, FastAPI)
-  pip install 'cat-agent[otel]'               # OpenTelemetry export for graph/agent traces
+  pip install 'cat-agent[rag]'                # RAG doc parsing and retrieval
+  pip install 'cat-agent[transformers]'       # Transformers / PyTorch backend
+  pip install 'cat-agent[llama]'              # LlamaCpp (+ vision) backend
+  pip install 'cat-agent[wasm]'               # WASM sandboxed code interpreter
+  pip install 'cat-agent[local]'              # All local backends above
+  pip install 'cat-agent[mlx]'                # MLX-LM backend (Apple silicon)
+  pip install 'cat-agent[mcp]'                # MCP (Model Context Protocol)
+  pip install 'cat-agent[python_executor]'    # Unsafe in-process Python executor
+  pip install 'cat-agent[code_interpreter]'   # Docker/Jupyter code interpreter server
+  pip install 'cat-agent[otel]'                 # OpenTelemetry export for graph/agent traces
 ```
 
 ### Local test with the same install path as PyPI
@@ -70,7 +103,7 @@ and optionally runs an example. CI uses the same script in the `consumer-install
 Released platform wheels include the native Rust stack used by RAG:
 
 - **BM25 index** for `KeywordSearch`
-- **HNSW vector index** for `VectorSearch` (usearch; hash or ONNX embeddings)
+- **HNSW vector index** for `VectorSearch` (usearch; native hash or ONNX embeddings)
 - **Keyword tokenization** (English stemming + Chinese segmentation via `jieba-rs`)
 - **Qwen token counting / truncation / document chunking**
 - **LLM input truncation** before each model call
@@ -252,11 +285,11 @@ Each event includes `trace_id`, `run_id`, `span_id`, agent name/class, and a typ
 | Backend | `model_type` | Description |
 |---|---|---|
 | OpenAI-compatible | `oai` | Any OpenAI-compatible API (default) |
-| LlamaCpp | `llama_cpp` | Local GGUF models via llama-cpp-python |
-| LlamaCpp Vision | `llama_cpp_vision` | Multimodal GGUF models (Qwen2-VL, LLaVA, etc.) |
-| Transformers | `transformers` | HuggingFace Transformers models (included in base install) |
+| Transformers | `transformers` | HuggingFace Transformers models (`pip install 'cat-agent[transformers]'`) |
 | MLX-LM | `mlx_lm` | Apple silicon local models via mlx-lm (`pip install 'cat-agent[mlx]'`) |
 | OpenVINO | `openvino` | Optimised inference on Intel hardware |
+| LlamaCpp | `llama_cpp` | Local GGUF models via llama-cpp-python (`pip install 'cat-agent[llama]'`) |
+| LlamaCpp Vision | `llama_cpp_vision` | Multimodal GGUF models (`pip install 'cat-agent[llama]'`) |
 
 ```python
 from cat_agent.agents import Assistant
@@ -281,15 +314,36 @@ bot = Assistant(
 | `cat_agent.log` | Loguru-based structured logging |
 | `cat_agent.observability` | Run/node/LLM/tool event hooks and handlers (incl. Mermaid, OpenTelemetry) |
 | `cat_agent.settings` | Configuration via environment variables |
-| `native` | PyO3 persistent BM25 index and experimental PDF text parser; Python remains the public API |
-| `examples` | Runnable demos (agents, RAG, graph workflows, observability, code interpreter) |
-| `benchmarks` | Repeatable RAG index and token-accounting micro-benchmarks |
+| `cat_agent._native` | Rust extension: BM25, HNSW, PDF parser, Qwen tokenizer, chunking, truncation |
+| `native` | Rust source (maturin/PyO3); builds `cat_agent._native` |
+| `examples` | Runnable demos — see list below |
+| `benchmarks` | Repeatable RAG / vector / truncation micro-benchmarks |
+
+### Examples (in-repo)
+
+| Path | Topic |
+|---|---|
+| `examples/transformers_math_guy/` | Transformers + function calling |
+| `examples/llama_cpp_math_guy/` | LlamaCpp + tools |
+| `examples/mlx_lm_math_guy/` | MLX-LM (Apple silicon) |
+| `examples/llama_cpp_vision/` | Multimodal LlamaCpp |
+| `examples/doc_parser_agent/` | Document Q&A |
+| `examples/multi_agent/` | GroupChat and Router |
+| `examples/graph/` | DAG workflow (`StateGraph`) |
+| `examples/observability/` | Trace handlers |
+| `examples/rag_keyword/` | Rust BM25 keyword search |
+| `examples/rag_vector/` | Native HNSW vector search |
+| `examples/rag_native/` | Chunking + vector + truncation pipeline |
+| `examples/wasm_code_interpreter/` | WASM sandbox execution |
+| `examples/logging_demo/` | Loguru configuration |
+
+Run any example from the repo root after installing the matching extras, e.g.
+`python examples/rag_vector/native_vector_search_demo.py`.
 
 ## Testing
 
-- **Test count:** 230+ tests including observability coverage in `tests/test_observability.py`.
-- **Test coverage:** **59%** (6,038 lines total).
-- **Run tests:** `pytest` (install with `pip install -e ".[test]"`).
+- **Test count:** 610+ test functions (`pytest`)
+- **Run tests:** `pytest` (install with `pip install -e ".[test,local,rag]"`)
 - **Report coverage:** `pytest --cov=cat_agent --cov-report=term`
 - **Native checks:** `cargo test --manifest-path native/Cargo.toml --no-default-features`
 - **BM25 benchmark:** `python benchmarks/benchmark_rag.py --chunks 1000 --queries 25`
@@ -299,6 +353,12 @@ bot = Assistant(
 - **Truncation benchmark:** `python benchmarks/benchmark_native_truncation.py --turns 40 --max-tokens 2048`
 
 ## Versioning
+
+Release wheels are built for **abi3 Python 3.10+** on:
+
+- Linux x86_64 and aarch64 (`manylinux`)
+- macOS arm64 and x86_64
+- Windows amd64
 
 ```bash
     chmod +x release.sh        # one time

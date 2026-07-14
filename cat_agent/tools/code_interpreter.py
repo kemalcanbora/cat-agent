@@ -449,7 +449,7 @@ def _check_host_deps():
     except ImportError as e:
         raise ImportError(
             'The dependencies for Code Interpreter support are not installed. '
-            'Please install the required dependencies by running: pip install "qwen-agent[code_interpreter]"') from e
+            'Please install the required dependencies by running: pip install "cat-agent[code_interpreter]"') from e
 
 
 def _escape_ansi(line: str) -> str:

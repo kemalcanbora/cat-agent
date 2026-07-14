@@ -32,7 +32,7 @@ from cat_agent.observability.helpers import (
     result_char_count,
 )
 from cat_agent.tools import TOOL_REGISTRY, BaseTool, MCPManager
-from cat_agent.tools.base import ToolServiceError
+from cat_agent.tools.base import ToolExecutionError, ToolNotFoundError, ToolServiceError
 from cat_agent.tools.simple_doc_parser import DocParserError
 from cat_agent.utils.utils import has_chinese_messages, merge_generate_cfgs
 
@@ -105,7 +105,7 @@ class Agent(ABC):
         Yields:
             The response generator.
         """
-        messages = copy.deepcopy(messages)
+        messages = list(messages)
         _return_message_type = 'dict'
         new_messages = []
         # Only return dict when all input messages are dict
@@ -126,17 +126,16 @@ class Agent(ABC):
 
         if self.system_message:
             if not new_messages or new_messages[0][ROLE] != SYSTEM:
-                # Add the system instruction to the agent
                 new_messages.insert(0, Message(role=SYSTEM, content=self.system_message))
             else:
-                # Already got system message in new_messages
-                if isinstance(new_messages[0][CONTENT], str):
-                    new_messages[0][CONTENT] = self.system_message + '\n\n' + new_messages[0][CONTENT]
+                sys_msg = copy.deepcopy(new_messages[0])
+                if isinstance(sys_msg[CONTENT], str):
+                    sys_msg[CONTENT] = self.system_message + '\n\n' + sys_msg[CONTENT]
                 else:
-                    assert isinstance(new_messages[0][CONTENT], list)
-                    assert new_messages[0][CONTENT][0].text
-                    new_messages[0][CONTENT] = [ContentItem(text=self.system_message + '\n\n')
-                                               ] + new_messages[0][CONTENT]  # noqa
+                    assert isinstance(sys_msg[CONTENT], list)
+                    assert sys_msg[CONTENT][0].text
+                    sys_msg[CONTENT] = [ContentItem(text=self.system_message + '\n\n')] + sys_msg[CONTENT]
+                new_messages[0] = sys_msg
 
         handlers = resolve_handlers(self._handlers, kwargs.get('handlers'))
         emit_stream_chunks = bool(kwargs.get('emit_stream_chunks'))
@@ -341,7 +340,10 @@ class Agent(ABC):
         """
         ctx = get_run_context()
         if ctx is None or not ctx.handlers:
-            return self._execute_tool(tool_name, tool_args, **kwargs)
+            try:
+                return self._execute_tool(tool_name, tool_args, **kwargs)
+            except (ToolNotFoundError, ToolExecutionError) as ex:
+                return ex.message or str(ex)
 
         with child_span() as span_id:
             emit(AgentEvent.tool_start(
@@ -357,6 +359,32 @@ class Agent(ABC):
             started_at = time.monotonic()
             try:
                 tool_result = self._execute_tool(tool_name, tool_args, **kwargs)
+            except (ToolNotFoundError, ToolExecutionError) as ex:
+                emit(AgentEvent.tool_error(
+                    trace_id=ctx.trace_id,
+                    run_id=ctx.run_id,
+                    span_id=span_id,
+                    parent_span_id=ctx.parent_span_id,
+                    agent_name=ctx.agent_name,
+                    agent_class=ctx.agent_class,
+                    tool_name=tool_name,
+                    duration_ms=(time.monotonic() - started_at) * 1000,
+                    error_type=type(ex).__name__,
+                    error_message=str(ex.message or ex),
+                ))
+                emit(AgentEvent.tool_end(
+                    trace_id=ctx.trace_id,
+                    run_id=ctx.run_id,
+                    span_id=span_id,
+                    parent_span_id=ctx.parent_span_id,
+                    agent_name=ctx.agent_name,
+                    agent_class=ctx.agent_class,
+                    tool_name=tool_name,
+                    duration_ms=(time.monotonic() - started_at) * 1000,
+                    success=False,
+                    result_chars=len(str(ex.message or ex)),
+                ))
+                return ex.message or str(ex)
             except (ToolServiceError, DocParserError) as ex:
                 emit(AgentEvent.tool_error(
                     trace_id=ctx.trace_id,
@@ -371,9 +399,6 @@ class Agent(ABC):
                     error_message=str(ex),
                 ))
                 raise
-            success = not (isinstance(tool_result, str) and tool_result.startswith('Tool ') and 'does not exists' in tool_result)
-            if isinstance(tool_result, str) and tool_result.startswith('An error occurred when calling tool'):
-                success = False
             emit(AgentEvent.tool_end(
                 trace_id=ctx.trace_id,
                 run_id=ctx.run_id,
@@ -383,7 +408,7 @@ class Agent(ABC):
                 agent_class=ctx.agent_class,
                 tool_name=tool_name,
                 duration_ms=(time.monotonic() - started_at) * 1000,
-                success=success,
+                success=True,
                 result_chars=result_char_count(tool_result, ctx),
             ))
             return tool_result
@@ -395,7 +420,7 @@ class Agent(ABC):
         **kwargs,
     ) -> Union[str, List[ContentItem]]:
         if tool_name not in self.function_map:
-            return f'Tool {tool_name} does not exists.'
+            raise ToolNotFoundError(tool_name)
         tool = self.function_map[tool_name]
         try:
             tool_result = tool.call(tool_args, **kwargs)
@@ -409,7 +434,7 @@ class Agent(ABC):
                             f'{exception_type}: {exception_message}\n' \
                             f'Traceback:\n{traceback_info}'
             logger.warning(error_message)
-            return error_message
+            raise ToolExecutionError(tool_name, error_message) from ex
 
         if isinstance(tool_result, str):
             return tool_result

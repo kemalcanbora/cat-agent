@@ -101,7 +101,7 @@ def _check_deps_for_python_executor():
     if missing:
         raise ImportError(
             f'Missing dependencies for Python Executor: {", ".join(missing)}. '
-            'Please install them by running: pip install "qwen-agent[python_executor]"'
+            'Please install them by running: pip install "cat-agent[python_executor]"'
         )
 
 
@@ -121,6 +121,10 @@ class PythonExecutor(BaseTool):
     }
 
     def __init__(self, cfg: Optional[Dict] = None):
+        logger.warning(
+            'PythonExecutor is not sandboxed and its regex denylist is trivially bypassed. '
+            'Prefer wasm_code_interpreter for untrusted code.'
+        )
         _check_deps_for_python_executor()
         super().__init__(cfg)
 

@@ -19,21 +19,29 @@ dependencies = [
     "jsonschema",
     "openai",
     "pydantic>=2.3.0",
-    "pydantic-core==2.23.4",
     "requests",
     "tiktoken",
     "pillow",
-    "dotenv",
-    "llama-cpp-python>=0.3.16",
+    "python-dotenv",
+    "loguru==0.7.3",
+]
+
+[project.optional-dependencies]
+transformers = [
     "transformers>=4.51.0",
     "torch>=2.0",
     "accelerate>=1.4.0",
     "pyopenssl>=26.0.0",
-    "wasmtime==41.0.0",
-    "loguru==0.7.3"
 ]
-
-[project.optional-dependencies]
+llama = [
+    "llama-cpp-python>=0.3.16",
+]
+wasm = [
+    "wasmtime==41.0.0",
+]
+local = [
+    "cat-agent[transformers,llama,wasm]",
+]
 mlx = [
     "mlx-lm==0.31.1",
 ]
@@ -49,7 +57,9 @@ rag = [
     "tabulate",
     "onnxruntime>=1.17.0",
 ]
-mcp = ["mcp"]
+mcp = [
+    "mcp>=1.2.0,<2.0.0",
+]
 otel = [
     "opentelemetry-api",
     "opentelemetry-sdk",
@@ -76,7 +86,7 @@ test = [
     "rank_bm25",
 ]
 all = [
-    "cat-agent[rag,mcp,otel,python_executor,code_interpreter]",
+    "cat-agent[rag,mcp,otel,python_executor,code_interpreter,transformers,llama,wasm,mlx]",
 ]
 
 [project.urls]
@@ -103,8 +113,6 @@ readme = { file = "README.md", content-type = "text/markdown" }
     "tools/resource/*.py",
     "tools/resource/docker_runtime/*.py",
     "tools/resource/docker_runtime/*.dockerfile",
-    "tools/resource/wasm_runtime/bin/python-3.11.1.wasm",
-    "tools/resource/wasm_runtime/usr/local/lib/python311.zip",
 ]
 
 [tool.maturin]
@@ -113,4 +121,3 @@ python-source = "."
 module-name = "cat_agent._native"
 bindings = "pyo3"
 strip = true
-

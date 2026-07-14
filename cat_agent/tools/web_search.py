@@ -17,7 +17,6 @@ import requests
 
 from cat_agent.tools.base import BaseTool, register_tool
 
-SERPER_API_KEY = os.getenv('SERPER_API_KEY', '')
 SERPER_URL = os.getenv('SERPER_URL', 'https://google.serper.dev/search')
 
 
@@ -45,11 +44,12 @@ class WebSearch(BaseTool):
 
     @staticmethod
     def search(query: str) -> List[Any]:
-        if not SERPER_API_KEY:
+        api_key = os.getenv('SERPER_API_KEY', '')
+        if not api_key:
             raise ValueError(
                 'SERPER_API_KEY is None! Please Apply for an apikey from https://serper.dev and set it as an environment variable by `export SERPER_API_KEY=xxxxxx`'
             )
-        headers = {'Content-Type': 'application/json', 'X-API-KEY': SERPER_API_KEY}
+        headers = {'Content-Type': 'application/json', 'X-API-KEY': api_key}
         payload = {'q': query}
         response = requests.post(SERPER_URL, json=payload, headers=headers)
         response.raise_for_status()

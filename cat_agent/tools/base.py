@@ -35,6 +35,19 @@ class ToolServiceError(Exception):
         self.extra = extra
 
 
+class ToolNotFoundError(ToolServiceError):
+    def __init__(self, tool_name: str):
+        message = f'Tool {tool_name} does not exist.'
+        super().__init__(message=message)
+        self.tool_name = tool_name
+
+
+class ToolExecutionError(ToolServiceError):
+    def __init__(self, tool_name: str, message: str):
+        super().__init__(message=message)
+        self.tool_name = tool_name
+
+
 def register_tool(name, allow_overwrite=False):
     def decorator(cls):
         if name in TOOL_REGISTRY:

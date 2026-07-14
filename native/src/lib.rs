@@ -1,4 +1,5 @@
 mod doc_chunker;
+mod hash_embed;
 mod keyword_tokenizer;
 mod message_truncation;
 mod pdf;
@@ -10,6 +11,7 @@ mod vector_index;
 use pyo3::prelude::*;
 
 use doc_chunker::split_doc_to_chunks_py;
+use hash_embed::hash_embed_py;
 use keyword_tokenizer::{
     clean_en_token_py, split_text_into_keywords_py, stem_words_py, string_tokenizer_py,
     tokenize_and_filter_py,
@@ -40,6 +42,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(decode_qwen_tokens_py, module)?)?;
     module.add_function(wrap_pyfunction!(truncate_qwen_text_py, module)?)?;
     module.add_function(wrap_pyfunction!(batch_count_qwen_tokens_py, module)?)?;
+    module.add_function(wrap_pyfunction!(hash_embed_py, module)?)?;
     module.add_function(wrap_pyfunction!(split_doc_to_chunks_py, module)?)?;
     module.add_function(wrap_pyfunction!(truncate_messages_py, module)?)?;
     module.add("__version__", env!("CARGO_PKG_VERSION"))?;

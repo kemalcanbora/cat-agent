@@ -30,9 +30,9 @@ def _format_transformers_import_error(err: BaseException) -> str:
         f'Root cause: {type(root).__name__}: {root}\n'
         'This usually means the active Python environment has incompatible packages '
         '(often pyOpenSSL/cryptography breaking accelerate).\n'
-        'Try: pip install -U "cat-agent>=0.4.3"\n'
+        'Try: pip install "cat-agent[transformers]"\n'
         'Or use a fresh venv: python -m venv .venv && source .venv/bin/activate '
-        '&& pip install cat-agent'
+        '&& pip install "cat-agent[transformers]"'
     )
 
 

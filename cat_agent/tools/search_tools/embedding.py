@@ -1,21 +1,8 @@
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """Local embedding backends for native vector search."""
 
 from __future__ import annotations
 
-import hashlib
-import math
+from importlib import import_module
 from typing import List, Protocol
 
 
@@ -26,6 +13,18 @@ class Embedder(Protocol):
         ...
 
 
+def _native_hash_embed(texts: List[str], dimensions: int) -> List[List[float]]:
+    try:
+        native = import_module('cat_agent._native')
+    except ImportError as error:
+        raise ImportError(
+            'Hash embeddings require the cat_agent native Rust extension. '
+            'Install a platform wheel or build it with: '
+            '`maturin develop --manifest-path native/Cargo.toml`'
+        ) from error
+    return native.hash_embed(texts, dimensions)
+
+
 class HashEmbedder:
     """Deterministic bag-of-keywords embedding (no external model required)."""
 
@@ -33,19 +32,7 @@ class HashEmbedder:
         self.dimensions = dimensions
 
     def embed(self, texts: List[str]) -> List[List[float]]:
-        from cat_agent.tools.search_tools.keyword_search import split_text_into_keywords
-
-        vectors: List[List[float]] = []
-        for text in texts:
-            vector = [0.0] * self.dimensions
-            for token in split_text_into_keywords(text[:2000]):
-                index = int(hashlib.sha256(token.encode('utf-8')).hexdigest(), 16) % self.dimensions
-                vector[index] += 1.0
-            norm = math.sqrt(sum(value * value for value in vector))
-            if norm > 0:
-                vector = [value / norm for value in vector]
-            vectors.append(vector)
-        return vectors
+        return _native_hash_embed(texts, self.dimensions)
 
 
 class OnnxEmbedder:
