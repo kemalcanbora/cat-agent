@@ -100,7 +100,7 @@ def _download_asset(relative_path: str, dest: Path, expected_sha256: str) -> Non
         'https://github.com/kemalcanbora/cat-agent/raw/'
         f'v{__version__}/cat_agent/tools/resource/wasm_runtime/{relative_path}'
     )
-    guard_outbound_request(purpose=f'WASM runtime download from {url}')
+    guard_outbound_request(purpose=f'WASM runtime download from {url}', url=url)
     dest.parent.mkdir(parents=True, exist_ok=True)
     logger.info('Downloading WASM runtime asset {}', relative_path)
     response = requests.get(url, timeout=120)

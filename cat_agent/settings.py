@@ -14,6 +14,10 @@ import ast
 import os
 from typing import List, Literal
 
+from cat_agent.env import load_env_file
+
+load_env_file()
+
 # Settings for LLMs
 DEFAULT_MAX_INPUT_TOKENS: int = int(os.getenv(
     'CAT_AGENT_DEFAULT_MAX_INPUT_TOKENS', 58000))  # The LLM will truncate the input messages if they exceed this limit

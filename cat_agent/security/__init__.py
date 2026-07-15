@@ -2,15 +2,19 @@
 
 from cat_agent.security.offline import (
     OfflineViolationError,
+    get_offline_allow_hosts,
     guard_outbound_request,
     install_offline_guards,
+    is_host_allowed,
     is_offline_mode,
 )
 
 __all__ = [
     'OfflineViolationError',
+    'get_offline_allow_hosts',
     'guard_outbound_request',
     'install_offline_guards',
+    'is_host_allowed',
     'is_offline_mode',
     'run_offline_readiness_check',
 ]

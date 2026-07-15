@@ -79,7 +79,7 @@ def serper_search(image_url: str, check_accessibility: bool = True, max_retry: i
             'SERPAPI_IMAGE_SEARCH_KEY is not set. image_search uses the SerpAPI cloud service '
             'and is disabled by default for on-prem deployments.'
         )
-    guard_outbound_request(purpose=f'SerpAPI image search at {SERPAPI_URL}')
+    guard_outbound_request(purpose=f'SerpAPI image search at {SERPAPI_URL}', url=SERPAPI_URL)
 
     payload = {
         'engine': 'google_reverse_image',  

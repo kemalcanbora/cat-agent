@@ -77,7 +77,7 @@ class WebSearch(BaseTool):
                 'CAT_AGENT_SEARXNG_URL is not set. Point it at your self-hosted SearxNG instance, '
                 'e.g. export CAT_AGENT_SEARXNG_URL=http://searxng.internal:8080'
             )
-        guard_outbound_request(purpose=f'SearxNG search at {base_url}')
+        guard_outbound_request(purpose=f'SearxNG search at {base_url}', url=base_url)
         response = requests.get(
             f'{base_url}{DEFAULT_SEARXNG_PATH}',
             params={'q': query, 'format': 'json'},
@@ -103,7 +103,7 @@ class WebSearch(BaseTool):
                 'SERPER_API_KEY is not set. Serper is a cloud service and is not recommended for '
                 'air-gapped deployments. Use SearxNG (default) or another on-prem index.'
             )
-        guard_outbound_request(purpose=f'Serper cloud search at {serper_url}')
+        guard_outbound_request(purpose=f'Serper cloud search at {serper_url}', url=serper_url)
         headers = {'Content-Type': 'application/json', 'X-API-KEY': api_key}
         response = requests.post(serper_url, json={'q': query}, headers=headers, timeout=30)
         response.raise_for_status()

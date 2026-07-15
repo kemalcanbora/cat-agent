@@ -6,7 +6,9 @@ import pytest
 
 from cat_agent.security.offline import (
     OfflineViolationError,
+    get_offline_allow_hosts,
     guard_outbound_request,
+    is_host_allowed,
     is_offline_mode,
 )
 from cat_agent.security.readiness import run_offline_readiness_check
@@ -32,6 +34,49 @@ class TestOfflineMode:
     def test_guard_outbound_request_allows_when_online(self, monkeypatch):
         monkeypatch.delenv('CAT_AGENT_OFFLINE', raising=False)
         guard_outbound_request(purpose='test request')
+
+
+class TestOfflineAllowlist:
+
+    def test_is_host_allowed_matches_hostname(self, monkeypatch):
+        monkeypatch.setenv('CAT_AGENT_OFFLINE', '1')
+        monkeypatch.setenv('CAT_AGENT_OFFLINE_ALLOW_HOSTS', 'llm.internal,llm-proxy')
+        assert is_host_allowed('llm.internal') is True
+        assert is_host_allowed('llm-proxy') is True
+        assert is_host_allowed('google.com') is False
+
+    def test_is_host_allowed_matches_cidr(self, monkeypatch):
+        monkeypatch.setenv('CAT_AGENT_OFFLINE', '1')
+        monkeypatch.setenv('CAT_AGENT_OFFLINE_ALLOW_HOSTS', '10.0.0.0/8,192.168.0.0/16')
+        assert is_host_allowed('10.1.2.3') is True
+        assert is_host_allowed('192.168.1.50') is True
+        assert is_host_allowed('8.8.8.8') is False
+
+    def test_guard_allows_allowlisted_host(self, monkeypatch):
+        monkeypatch.setenv('CAT_AGENT_OFFLINE', '1')
+        monkeypatch.setenv('CAT_AGENT_OFFLINE_ALLOW_HOSTS', 'llm.internal')
+        guard_outbound_request(purpose='LLM request', host='llm.internal')
+
+    def test_guard_blocks_non_allowlisted_host(self, monkeypatch):
+        monkeypatch.setenv('CAT_AGENT_OFFLINE', '1')
+        monkeypatch.setenv('CAT_AGENT_OFFLINE_ALLOW_HOSTS', 'llm.internal')
+        with pytest.raises(OfflineViolationError, match='Blocked outbound request'):
+            guard_outbound_request(purpose='external request', host='google.com')
+
+    def test_openai_base_url_auto_exempt(self, monkeypatch):
+        monkeypatch.setenv('CAT_AGENT_OFFLINE', '1')
+        monkeypatch.delenv('CAT_AGENT_OFFLINE_ALLOW_HOSTS', raising=False)
+        monkeypatch.setenv('OPENAI_BASE_URL', 'http://llm-proxy:8080/v1')
+        assert 'llm-proxy' in get_offline_allow_hosts()
+        guard_outbound_request(purpose='LLM request', host='llm-proxy')
+
+    def test_guard_allows_allowlisted_url(self, monkeypatch):
+        monkeypatch.setenv('CAT_AGENT_OFFLINE', '1')
+        monkeypatch.setenv('CAT_AGENT_OFFLINE_ALLOW_HOSTS', 'searxng.internal')
+        guard_outbound_request(
+            purpose='SearxNG search',
+            url='http://searxng.internal:8080/search',
+        )
 
 
 @pytest.fixture(autouse=True)
@@ -97,8 +142,10 @@ class TestToolPolicy:
 
     def test_offline_readiness_lists_disabled_tools(self, monkeypatch):
         monkeypatch.setenv('CAT_AGENT_OFFLINE', '1')
+        monkeypatch.setenv('CAT_AGENT_OFFLINE_ALLOW_HOSTS', 'llm.internal')
         report = run_offline_readiness_check()
         assert report.offline_mode is True
+        assert 'llm.internal' in report.allowed_hosts
         assert 'web_search' in report.disabled_tools
         assert 'image_search' in report.disabled_tools
         assert report.format_report()
@@ -117,6 +164,7 @@ class TestWebSearchBackends:
     def test_searxng_search_parses_results(self, monkeypatch):
         from cat_agent.tools.web_search import WebSearch
 
+        monkeypatch.delenv('CAT_AGENT_OFFLINE', raising=False)
         monkeypatch.setenv('CAT_AGENT_SEARXNG_URL', 'http://searxng.internal:8080')
 
         class FakeResponse:

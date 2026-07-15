@@ -36,6 +36,8 @@ On-prem security platform for regulated sectors:
 | Control | Purpose |
 |---|---|
 | `CAT_AGENT_OFFLINE=1` | Air-gap kill-switch: disable network tools, block outbound requests |
+| `CAT_AGENT_OFFLINE_ALLOW_HOSTS` | Comma-separated allowlist for on-prem endpoints (hostnames, IPs, CIDR) |
+| `.env` / `CAT_AGENT_ENV_FILE` | Load on-prem settings from a file (no manual `export` needed) |
 | `cat-agent offline-check` | Readiness report (WASM runtime, disabled tools, issues) |
 | `cat-agent fetch-runtime --output <dir>` | Copy bundled WASM assets for offline transfer |
 | Opt-in network tools | `web_search`, `image_search`, `web_extractor` are not in the default registry |
@@ -49,9 +51,14 @@ On-prem security platform for regulated sectors:
 | PII redaction | Offline regex redaction for RAG, prompts, and audit logs |
 
 ```bash
-export CAT_AGENT_OFFLINE=1
+cp .env.example .env
+# edit .env — set OPENAI_BASE_URL, CAT_AGENT_ENCRYPTION_KEY, allowlist, etc.
 cat-agent offline-check
 ```
+
+Cat-Agent loads `.env` from the current working directory on `import cat_agent` and when using the `cat-agent` CLI. Set `CAT_AGENT_ENV_FILE` to use another path. Shell exports still work and take precedence over `.env`.
+
+`OPENAI_BASE_URL` (or `CAT_AGENT_LLM_BASE_URL`) is automatically added to the allowlist so agents can reach your on-prem model gateway while outbound internet access stays blocked.
 
 ### Encrypted local storage
 
@@ -76,13 +83,15 @@ cat-agent encrypt-storage --workspace ./workspace
 **Strict mode** — refuse encrypted components if plaintext remains:
 
 ```bash
-export CAT_AGENT_REQUIRE_ENCRYPTED_STORAGE=1
+# .env
+CAT_AGENT_REQUIRE_ENCRYPTED_STORAGE=1
 ```
 
 Disable encryption only for local development:
 
 ```bash
-export CAT_AGENT_ENCRYPT_AT_REST=0
+# .env
+CAT_AGENT_ENCRYPT_AT_REST=0
 ```
 
 ### Encrypted document cache
@@ -105,7 +114,8 @@ import base64, secrets
 print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())
 PY
 
-export CAT_AGENT_ENCRYPTION_KEY='<paste-key-here>'
+# .env
+CAT_AGENT_ENCRYPTION_KEY=<paste-key-here>
 ```
 
 **Migrate an existing plaintext cache:**
@@ -119,13 +129,15 @@ cat-agent encrypt-cache --path ./workspace/tools/doc_parser
 **Strict mode** — refuse to start if any plaintext storage remains:
 
 ```bash
-export CAT_AGENT_REQUIRE_ENCRYPTED_STORAGE=1
+# .env
+CAT_AGENT_REQUIRE_ENCRYPTED_STORAGE=1
 ```
 
 Disable encryption only for local development:
 
 ```bash
-export CAT_AGENT_ENCRYPT_AT_REST=0
+# .env
+CAT_AGENT_ENCRYPT_AT_REST=0
 ```
 
 ### Air-gapped deployment package
@@ -161,8 +173,9 @@ file access. Each record embeds the hash of the previous record; optional HMAC
 signatures use your encryption key.
 
 ```bash
-export CAT_AGENT_AUDIT=1
-export CAT_AGENT_AUDIT_PATH=./workspace/storage/audit/audit.jsonl   # optional
+# .env
+CAT_AGENT_AUDIT=1
+CAT_AGENT_AUDIT_PATH=./workspace/storage/audit/audit.jsonl
 
 # Verify chain integrity (for auditors / compliance reviews)
 cat-agent audit-verify --path ./workspace/storage/audit/audit.jsonl
@@ -190,11 +203,11 @@ sequences, and Turkish TC kimlik numbers (with checksum validation). Redacted
 values are replaced with `[PII]`.
 
 ```bash
-# Disable all PII redaction (dev only)
-export CAT_AGENT_PII_REDACT=0
+# .env — disable all PII redaction (dev only)
+CAT_AGENT_PII_REDACT=0
 
 # Disable a single interception point
-export CAT_AGENT_PII_REDACT_AUDIT=0
+CAT_AGENT_PII_REDACT_AUDIT=0
 ```
 
 Optional NER-based redaction via Presidio (still fully offline):

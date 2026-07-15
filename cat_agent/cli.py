@@ -6,6 +6,10 @@ import argparse
 import os
 import sys
 
+from cat_agent.env import load_env_file
+
+load_env_file()
+
 from cat_agent.security.audit import export_audit_log, verify_audit_log
 from cat_agent.security.encrypted_cache import migrate_plaintext_cache
 from cat_agent.security.encrypted_migrate import migrate_workspace_storage

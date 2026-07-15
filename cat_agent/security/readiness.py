@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass, field
 from typing import List
 
-from cat_agent.security.offline import is_offline_mode
+from cat_agent.security.offline import get_offline_allow_hosts, is_offline_mode
 from cat_agent.security.tool_policy import TOOL_METADATA, tool_is_cloud_service, tool_requires_network
 
 
@@ -15,6 +15,7 @@ class OfflineReadinessReport:
     offline_mode: bool
     disabled_tools: List[str] = field(default_factory=list)
     cloud_tools: List[str] = field(default_factory=list)
+    allowed_hosts: List[str] = field(default_factory=list)
     wasm_runtime_ready: bool = False
     wasm_runtime_path: str = ''
     encrypt_at_rest_enabled: bool = False
@@ -41,6 +42,8 @@ class OfflineReadinessReport:
             lines.append(f'  Network tools disabled: {", ".join(sorted(self.disabled_tools))}')
         if self.cloud_tools:
             lines.append(f'  Cloud-backed tools (not for air-gap): {", ".join(sorted(self.cloud_tools))}')
+        if self.allowed_hosts:
+            lines.append(f'  Offline allowlist hosts: {", ".join(self.allowed_hosts)}')
         for note in self.notes:
             lines.append(f'  note: {note}')
         for issue in self.issues:
@@ -126,6 +129,7 @@ def run_offline_readiness_check(*, strict: bool = False) -> OfflineReadinessRepo
 
     offline = is_offline_mode()
     report = OfflineReadinessReport(offline_mode=offline)
+    report.allowed_hosts = get_offline_allow_hosts()
 
     for registry in (TOOL_REGISTRY, OPTIONAL_TOOL_REGISTRY):
         for name in sorted(registry.keys()):

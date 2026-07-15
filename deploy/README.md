@@ -49,4 +49,7 @@ docker compose -f deploy/docker-compose.yml run --rm cat-agent python -c "import
 ```
 
 Point your application at the mounted `/data/workspace` and configure an
-on-prem OpenAI-compatible endpoint via `OPENAI_BASE_URL`.
+on-prem OpenAI-compatible endpoint via `OPENAI_BASE_URL` in `deploy/.env`.
+Set `CAT_AGENT_OFFLINE_ALLOW_HOSTS` to permit internal LLM gateways while
+`CAT_AGENT_OFFLINE=1` blocks the public internet. Docker Compose and
+Cat-Agent both read this `.env` file automatically.
