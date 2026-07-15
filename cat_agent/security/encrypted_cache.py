@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from typing import Iterable, Tuple
+from typing import Iterable, Optional, Tuple
 
+from cat_agent.log import logger
 from cat_agent.security.at_rest import is_encrypt_at_rest_enabled, is_encrypted_at_rest_required
 from cat_agent.security.crypto import (
     EncryptionKeyError,
@@ -49,10 +50,10 @@ def count_plaintext_values(db_path: str) -> int:
     return sum(1 for _, value in _iter_values(db_path) if not is_encrypted_value(value))
 
 
-def ensure_encrypted_cache_ready(storage_root: str) -> bytes:
-    """Validate cache policy and return the encryption key."""
+def ensure_encrypted_cache_ready(storage_root: str) -> Optional[bytes]:
+    """Validate cache policy and return the encryption key when available."""
     if not should_encrypt_doc_parser_cache():
-        raise EncryptionKeyError('Doc parser cache encryption is disabled.')
+        return None
 
     db_path = _sqlite_path(storage_root)
     plaintext_count = count_plaintext_values(db_path)
@@ -63,19 +64,32 @@ def ensure_encrypted_cache_ready(storage_root: str) -> bytes:
             'CAT_AGENT_REQUIRE_ENCRYPTED_STORAGE=1.'
         )
 
-    return resolve_encryption_key(create_if_missing=True)
+    try:
+        return resolve_encryption_key(create_if_missing=True)
+    except EncryptionKeyError:
+        if is_encrypted_at_rest_required():
+            raise
+        logger.warning(
+            'Encryption is enabled but no key is available; SQLite cache at {} will use plaintext.',
+            storage_root,
+        )
+        return None
 
 
-def maybe_decrypt_value(value: str, key: bytes, *, encrypt_at_rest: bool) -> str:
+def maybe_decrypt_value(value: str, key: Optional[bytes], *, encrypt_at_rest: bool) -> str:
     if is_encrypted_value(value):
+        if key is None:
+            raise EncryptionKeyError(
+                'Encrypted cache value found but no decryption key is available.'
+            )
         return decrypt_value(value, key)
     if encrypt_at_rest and is_encrypted_at_rest_required():
         raise PlaintextCacheError('Plaintext cache value found while encrypted storage is required.')
     return value
 
 
-def maybe_encrypt_value(value: str, key: bytes, *, encrypt_at_rest: bool) -> str:
-    if not encrypt_at_rest:
+def maybe_encrypt_value(value: str, key: Optional[bytes], *, encrypt_at_rest: bool) -> str:
+    if not encrypt_at_rest or key is None:
         return value
     if is_encrypted_value(value):
         return value

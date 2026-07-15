@@ -138,7 +138,7 @@ class TestCacheMigration:
 
 class TestDocParserEncryptedCache:
 
-    def test_doc_parser_uses_encrypted_storage_by_default(self, encryption_key_env):
+    def test_doc_parser_uses_encrypted_storage_when_key_available(self, encryption_key_env):
         root = tempfile.mkdtemp()
         doc = [{'title': 'T', 'content': [{'text': 'Body', 'token': 2}]}]
         with patch('cat_agent.tools.doc_parser.SimpleDocParser') as mock_extractor_cls:
@@ -149,3 +149,20 @@ class TestDocParserEncryptedCache:
         with sqlite3.connect(_sqlite_path(root)) as conn:
             value = conn.execute('SELECT value FROM kv').fetchone()[0]
         assert is_encrypted_value(value)
+
+    def test_doc_parser_works_without_encryption_key(self, monkeypatch):
+        monkeypatch.setenv('CAT_AGENT_ENCRYPT_AT_REST', '1')
+        monkeypatch.delenv('CAT_AGENT_ENCRYPTION_KEY', raising=False)
+        monkeypatch.setattr('cat_agent.security.crypto._keyring_get_password', lambda: None)
+        monkeypatch.setattr('cat_agent.security.crypto._keyring_set_password', lambda value: False)
+
+        root = tempfile.mkdtemp()
+        doc = [{'title': 'T', 'content': [{'text': 'Body', 'token': 2}]}]
+        with patch('cat_agent.tools.doc_parser.SimpleDocParser') as mock_extractor_cls:
+            mock_extractor_cls.return_value.call.return_value = doc
+            parser = DocParser({'path': root, 'max_ref_token': 10_000})
+            parser.call({'url': 'file:///tmp/report.pdf'})
+
+        with sqlite3.connect(_sqlite_path(root)) as conn:
+            value = conn.execute('SELECT value FROM kv').fetchone()[0]
+        assert not is_encrypted_value(value)
