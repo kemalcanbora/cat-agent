@@ -79,6 +79,11 @@ jobs:
       - name: Audit platform wheels
         run: chmod +x scripts/audit_release_wheels.sh && ./scripts/audit_release_wheels.sh
 
+      - name: Generate SBOM
+        run: |
+          chmod +x scripts/generate_sbom.sh
+          ./scripts/generate_sbom.sh dist
+
       - name: Install upload tools
         run: python -m pip install --upgrade twine
 

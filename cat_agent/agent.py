@@ -29,9 +29,12 @@ from cat_agent.observability.helpers import (
     extract_usage,
     format_tool_args,
     messages_have_tool_call,
+    messages_to_payload,
     result_char_count,
+    truncate_result_preview,
 )
 from cat_agent.tools import TOOL_REGISTRY, BaseTool, MCPManager
+from cat_agent.tools.base import OPTIONAL_TOOL_REGISTRY, is_tool_allowed_for_agent
 from cat_agent.tools.base import ToolExecutionError, ToolNotFoundError, ToolServiceError
 from cat_agent.tools.simple_doc_parser import DocParserError
 from cat_agent.utils.utils import has_chinese_messages, merge_generate_cfgs
@@ -240,6 +243,22 @@ class Agent(ABC):
         """
         raise NotImplementedError
 
+    def _audit_context(self) -> dict:
+        ctx = get_run_context()
+        if ctx is None:
+            return {
+                'trace_id': None,
+                'run_id': None,
+                'agent_name': self.name,
+                'agent_class': type(self).__name__,
+            }
+        return {
+            'trace_id': ctx.trace_id,
+            'run_id': ctx.run_id,
+            'agent_name': ctx.agent_name,
+            'agent_class': ctx.agent_class,
+        }
+
     def _call_llm(
         self,
         messages: List[Message],
@@ -260,17 +279,41 @@ class Agent(ABC):
         Yields:
             The response generator of LLM.
         """
+        from cat_agent.security.audit import append_audit_record, is_audit_enabled
+        from cat_agent.security.pii import maybe_redact_messages_for_prompt
+
         ctx = get_run_context()
+        messages_for_llm = maybe_redact_messages_for_prompt(messages)
+        audit_meta = self._audit_context()
+        extra_cfg = merge_generate_cfgs(
+            base_generate_cfg=self.extra_generate_cfg,
+            new_generate_cfg=extra_generate_cfg,
+        )
+
+        if is_audit_enabled():
+            append_audit_record(
+                'audit.prompt',
+                {'messages': messages_to_payload(messages_for_llm)},
+                **audit_meta,
+            )
+
         if ctx is None or not ctx.handlers:
-            yield from self.llm.chat(
-                messages=messages,
+            final_output: List[Message] = []
+            for output in self.llm.chat(
+                messages=messages_for_llm,
                 functions=functions,
                 stream=stream,
-                extra_generate_cfg=merge_generate_cfgs(
-                    base_generate_cfg=self.extra_generate_cfg,
-                    new_generate_cfg=extra_generate_cfg,
-                ),
-            )
+                extra_generate_cfg=extra_cfg,
+            ):
+                if output:
+                    final_output = output
+                yield output
+            if is_audit_enabled() and final_output:
+                append_audit_record(
+                    'audit.model_output',
+                    {'messages': messages_to_payload(final_output)},
+                    **audit_meta,
+                )
             return
 
         model = agent_model_name(self.llm)
@@ -284,20 +327,17 @@ class Agent(ABC):
                 agent_name=ctx.agent_name,
                 agent_class=ctx.agent_class,
                 model=model,
-                message_count=len(messages),
+                message_count=len(messages_for_llm),
                 tool_count=tool_count,
             ))
             started_at = time.monotonic()
             chunk_count = 0
-            final_output: List[Message] = []
+            final_output = []
             for output in self.llm.chat(
-                messages=messages,
+                messages=messages_for_llm,
                 functions=functions,
                 stream=stream,
-                extra_generate_cfg=merge_generate_cfgs(
-                    base_generate_cfg=self.extra_generate_cfg,
-                    new_generate_cfg=extra_generate_cfg,
-                ),
+                extra_generate_cfg=extra_cfg,
             ):
                 chunk_count += 1
                 if output:
@@ -327,6 +367,12 @@ class Agent(ABC):
                 usage=extract_usage(final_output),
                 chunk_count=chunk_count,
             ))
+            if is_audit_enabled() and final_output:
+                append_audit_record(
+                    'audit.model_output',
+                    {'messages': messages_to_payload(final_output)},
+                    **audit_meta,
+                )
 
     def _call_tool(self, tool_name: str, tool_args: Union[str, dict] = '{}', **kwargs) -> Union[str, List[ContentItem]]:
         """The interface of calling tools for the agent.
@@ -338,12 +384,46 @@ class Agent(ABC):
         Returns:
             The output of tools.
         """
+        from cat_agent.security.audit import append_audit_record, is_audit_enabled
+
         ctx = get_run_context()
+        audit_meta = self._audit_context()
+        if is_audit_enabled():
+            append_audit_record(
+                'audit.tool_call',
+                {
+                    'tool_name': tool_name,
+                    'tool_args': format_tool_args(tool_args, ctx),
+                },
+                **audit_meta,
+            )
+
         if ctx is None or not ctx.handlers:
             try:
-                return self._execute_tool(tool_name, tool_args, **kwargs)
+                tool_result = self._execute_tool(tool_name, tool_args, **kwargs)
             except (ToolNotFoundError, ToolExecutionError) as ex:
+                if is_audit_enabled():
+                    append_audit_record(
+                        'audit.tool_result',
+                        {
+                            'tool_name': tool_name,
+                            'success': False,
+                            'result': str(ex.message or ex),
+                        },
+                        **audit_meta,
+                    )
                 return ex.message or str(ex)
+            if is_audit_enabled():
+                append_audit_record(
+                    'audit.tool_result',
+                    {
+                        'tool_name': tool_name,
+                        'success': True,
+                        'result': truncate_result_preview(tool_result, ctx),
+                    },
+                    **audit_meta,
+                )
+            return tool_result
 
         with child_span() as span_id:
             emit(AgentEvent.tool_start(
@@ -384,6 +464,16 @@ class Agent(ABC):
                     success=False,
                     result_chars=len(str(ex.message or ex)),
                 ))
+                if is_audit_enabled():
+                    append_audit_record(
+                        'audit.tool_result',
+                        {
+                            'tool_name': tool_name,
+                            'success': False,
+                            'result': str(ex.message or ex),
+                        },
+                        **audit_meta,
+                    )
                 return ex.message or str(ex)
             except (ToolServiceError, DocParserError) as ex:
                 emit(AgentEvent.tool_error(
@@ -411,6 +501,16 @@ class Agent(ABC):
                 success=True,
                 result_chars=result_char_count(tool_result, ctx),
             ))
+            if is_audit_enabled():
+                append_audit_record(
+                    'audit.tool_result',
+                    {
+                        'tool_name': tool_name,
+                        'success': True,
+                        'result': truncate_result_preview(tool_result, ctx),
+                    },
+                    **audit_meta,
+                )
             return tool_result
 
     def _execute_tool(
@@ -450,6 +550,11 @@ class Agent(ABC):
                 logger.warning(f'Repeatedly adding tool {tool_name}, will use the newest tool in function list')
             self.function_map[tool_name] = tool
         elif isinstance(tool, dict) and 'mcpServers' in tool:
+            from cat_agent.security.offline import is_offline_mode
+            if is_offline_mode():
+                raise ValueError(
+                    'MCP servers require network access and are disabled when CAT_AGENT_OFFLINE=1.'
+                )
             tools = MCPManager().initConfig(tool)
             for tool in tools:
                 tool_name = tool.name
@@ -464,7 +569,22 @@ class Agent(ABC):
                 tool_name = tool
                 tool_cfg = None
             if tool_name not in TOOL_REGISTRY:
+                if tool_name in OPTIONAL_TOOL_REGISTRY:
+                    raise ValueError(
+                        f'Tool {tool_name} is opt-in (network/cloud). '
+                        f'Call cat_agent.tools.enable_optional_tools("{tool_name}") before use.'
+                    )
                 raise ValueError(f'Tool {tool_name} is not registered.')
+
+            tool_cls = TOOL_REGISTRY[tool_name]
+            if not is_tool_allowed_for_agent(tool_name, tool_cls):
+                from cat_agent.security.offline import is_offline_mode
+                if is_offline_mode():
+                    logger.warning('Skipping tool {} because CAT_AGENT_OFFLINE=1', tool_name)
+                    return
+                raise ValueError(
+                    f'Tool {tool_name} requires network access and is disabled in offline mode.'
+                )
 
             if tool_name in self.function_map:
                 logger.warning(f'Repeatedly adding tool {tool_name}, will use the newest tool in function list')

@@ -85,8 +85,9 @@ class TestReActChatPrependReactPrompt:
         mock_llm = MagicMock()
         mock_llm.model = "gpt-4"
         mock_llm.model_type = "openai"
-        # Use a tool from registry so _init_tool accepts it
-        tool_name = "web_search" if "web_search" in TOOL_REGISTRY else list(TOOL_REGISTRY.keys())[0]
+        # Use a stable default-registry tool so _init_tool accepts it
+        tool_name = 'storage'
+        assert tool_name in TOOL_REGISTRY
         with patch("cat_agent.agents.fncall_agent.Memory", return_value=MagicMock()):
             agent = ReActChat(llm=mock_llm, function_list=[tool_name])
         messages = [Message(USER, "What is Python?")]

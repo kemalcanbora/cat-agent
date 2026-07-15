@@ -23,6 +23,8 @@ import time
 from typing import Dict, Optional, Union
 
 from cat_agent.log import logger
+from cat_agent.security.audit import append_audit_record, is_audit_enabled
+from cat_agent.security.encrypted_cache import should_encrypt_doc_parser_cache
 from cat_agent.settings import DEFAULT_WORKSPACE
 from cat_agent.tools.base import BaseTool, register_tool
 from cat_agent.tools.storage import KeyNotExistsError, Storage
@@ -71,7 +73,10 @@ class SimpleDocParser(BaseTool):
         self.data_root = self.cfg.get('path', os.path.join(DEFAULT_WORKSPACE, 'tools', self.name))
         self.extract_image = self.cfg.get('extract_image', False)
         self.structured_doc = self.cfg.get('structured_doc', False)
-        self.db = Storage({'storage_root_path': self.data_root})
+        storage_cfg = {'storage_root_path': self.data_root}
+        if should_encrypt_doc_parser_cache():
+            storage_cfg['encrypt_at_rest'] = True
+        self.db = Storage(storage_cfg)
 
     def call(self, params: Union[str, dict], **kwargs) -> Union[str, list]:
         """Parse a document by URL/path and return formatted content.
@@ -81,14 +86,25 @@ class SimpleDocParser(BaseTool):
         """
         params = self._verify_json_format_args(params)
         path = params['url']
-        cached_name_ori = f'{hash_sha256(path)}_ori'
+        path_key = hash_sha256(path)
+        cached_name_ori = f'{path_key}_ori'
 
         try:
             parsed_file = json.loads(self.db.get(cached_name_ori))
-            logger.info(f'Read parsed {path} from cache.')
+            logger.info('Read parsed document from cache (key={}).', cached_name_ori)
         except KeyNotExistsError:
-            logger.info(f'Start parsing {path}...')
+            logger.info('Start parsing document (key={})...', path_key)
             time1 = time.time()
+
+            if is_audit_enabled():
+                append_audit_record(
+                    'audit.file_access',
+                    {
+                        'path_hash': path_key,
+                        'operation': 'read',
+                        'tool': 'simple_doc_parser',
+                    },
+                )
 
             # Resolve the file path
             path = self._resolve_path(path)
@@ -111,7 +127,7 @@ class SimpleDocParser(BaseTool):
                     para['token'] = count_tokens(para.get('text', para.get('table')))
 
             time2 = time.time()
-            logger.info(f'Finished parsing {path}. Time spent: {time2 - time1} seconds.')
+            logger.info('Finished parsing document {} in {:.2f}s.', path_key, time2 - time1)
             self.db.put(cached_name_ori, json.dumps(parsed_file, ensure_ascii=False, indent=2))
 
         if not self.structured_doc:

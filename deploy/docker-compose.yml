@@ -1,0 +1,26 @@
+services:
+  cat-agent:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: cat-agent:on-prem
+    environment:
+      CAT_AGENT_OFFLINE: "1"
+      CAT_AGENT_AUDIT: "1"
+      CAT_AGENT_ENCRYPT_AT_REST: "1"
+      CAT_AGENT_PII_REDACT: "1"
+      CAT_AGENT_DEFAULT_WORKSPACE: /data/workspace
+      CAT_AGENT_AUDIT_PATH: /data/audit/audit.jsonl
+      CAT_AGENT_ENCRYPTION_KEY: ${CAT_AGENT_ENCRYPTION_KEY:?set encryption key in .env}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-http://localhost:8080/v1}
+    volumes:
+      - workspace:/data/workspace
+      - models:/data/models
+      - audit:/data/audit
+    command: ["offline-check", "--strict"]
+
+volumes:
+  workspace:
+  models:
+  audit:

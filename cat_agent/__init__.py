@@ -1,4 +1,9 @@
-__version__ = "0.6.1"
+__version__ = "0.7.0"
+
+from cat_agent.security.offline import install_offline_guards
+
+install_offline_guards()
+
 from .agent import Agent
 from .multi_agent_hub import MultiAgentHub
 

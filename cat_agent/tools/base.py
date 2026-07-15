@@ -14,6 +14,7 @@ from cat_agent.utils.utils import (
 )
 
 TOOL_REGISTRY = {}
+OPTIONAL_TOOL_REGISTRY = {}
 
 
 class ToolServiceError(Exception):
@@ -48,21 +49,56 @@ class ToolExecutionError(ToolServiceError):
         self.tool_name = tool_name
 
 
-def register_tool(name, allow_overwrite=False):
+def register_tool(
+    name,
+    allow_overwrite=False,
+    *,
+    requires_network: bool = False,
+    cloud_service: bool = False,
+    register_by_default: bool = True,
+):
     def decorator(cls):
-        if name in TOOL_REGISTRY:
-            if allow_overwrite:
-                logger.warning(f"Tool `{name}` already exists! Overwriting with class {cls}.")
-            else:
-                raise ValueError(f"Tool `{name}` already exists! Please ensure that the tool name is unique.")
+        from cat_agent.security.tool_policy import record_tool_metadata
+
+        cls.requires_network = requires_network
+        cls.cloud_service = cloud_service
+        record_tool_metadata(
+            name,
+            requires_network=requires_network,
+            cloud_service=cloud_service,
+            register_by_default=register_by_default,
+        )
+        target = TOOL_REGISTRY if register_by_default else OPTIONAL_TOOL_REGISTRY
+        if name in target and not allow_overwrite:
+            registry_label = 'Tool' if register_by_default else 'Optional tool'
+            raise ValueError(f'{registry_label} `{name}` already exists! Please ensure that the tool name is unique.')
         if cls.name and (cls.name != name):
             raise ValueError(f'{cls.__name__}.name="{cls.name}" conflicts with @register_tool(name="{name}").')
         cls.name = name
-        TOOL_REGISTRY[name] = cls
-
+        if allow_overwrite and name in target:
+            logger.warning(f'Tool `{name}` already exists! Overwriting with class {cls}.')
+        target[name] = cls
+        if register_by_default:
+            OPTIONAL_TOOL_REGISTRY.pop(name, None)
         return cls
 
     return decorator
+
+
+def enable_optional_tools(*names: str) -> None:
+    """Move opt-in network/cloud tools into the active registry."""
+    if not names:
+        names = tuple(OPTIONAL_TOOL_REGISTRY.keys())
+    for name in names:
+        if name not in OPTIONAL_TOOL_REGISTRY:
+            continue
+        TOOL_REGISTRY[name] = OPTIONAL_TOOL_REGISTRY.pop(name)
+
+
+def is_tool_allowed_for_agent(tool_name: str, tool_cls: type) -> bool:
+    from cat_agent.security.tool_policy import is_tool_allowed_in_offline_mode
+
+    return is_tool_allowed_in_offline_mode(tool_name, tool_cls)
 
 
 def is_tool_schema(obj: dict) -> bool:
@@ -117,6 +153,8 @@ class BaseTool(ABC):
     name: str = ""
     description: str = ""
     parameters: Union[List[dict], dict, None] = None  # avoid mutable default
+    requires_network: bool = False
+    cloud_service: bool = False
 
     def __init__(self, cfg: Optional[dict] = None):
         self.cfg = cfg or {}

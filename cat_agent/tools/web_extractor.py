@@ -16,7 +16,12 @@ from cat_agent.tools.base import BaseTool, register_tool
 from cat_agent.tools.simple_doc_parser import SimpleDocParser
 
 
-@register_tool('web_extractor')
+@register_tool(
+    'web_extractor',
+    requires_network=True,
+    cloud_service=False,
+    register_by_default=False,
+)
 class WebExtractor(BaseTool):
     description = 'Get content of one webpage.'
     parameters = {

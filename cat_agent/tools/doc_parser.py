@@ -18,8 +18,10 @@ from typing import Dict, List, Optional, Union
 from pydantic import BaseModel
 
 from cat_agent.log import logger
+from cat_agent.security.encrypted_cache import should_encrypt_doc_parser_cache
 from cat_agent.settings import DEFAULT_MAX_REF_TOKEN, DEFAULT_PARSER_PAGE_SIZE, DEFAULT_WORKSPACE
 from cat_agent.tools.base import BaseTool, register_tool
+from cat_agent.security.pii import redact_structured_doc
 from cat_agent.tools.simple_doc_parser import PARAGRAPH_SPLIT_SYMBOL, SimpleDocParser, get_plain_doc
 from cat_agent.tools.storage import KeyNotExistsError, Storage
 from cat_agent.utils.tokenization_qwen import count_tokens, ensure_qwen_tokenizer
@@ -83,7 +85,10 @@ class DocParser(BaseTool):
         self.parser_page_size: int = self.cfg.get('parser_page_size', DEFAULT_PARSER_PAGE_SIZE)
 
         self.data_root = self.cfg.get('path', os.path.join(DEFAULT_WORKSPACE, 'tools', self.name))
-        self.db = Storage({'storage_root_path': self.data_root})
+        storage_cfg = {'storage_root_path': self.data_root}
+        if should_encrypt_doc_parser_cache():
+            storage_cfg['encrypt_at_rest'] = True
+        self.db = Storage(storage_cfg)
 
         self.doc_extractor = SimpleDocParser({'structured_doc': True})
 
@@ -112,16 +117,18 @@ class DocParser(BaseTool):
         parser_page_size = kwargs.get('parser_page_size', self.parser_page_size)
 
         url = params['url']
+        url_key = hash_sha256(url)
 
-        cached_name_chunking = f'{hash_sha256(url)}_{str(parser_page_size)}'
+        cached_name_chunking = f'{url_key}_{str(parser_page_size)}'
         try:
             # Directly load the chunked doc
             record = self.db.get(cached_name_chunking)
             record = json.loads(record)
-            logger.info(f'Read chunked {url} from cache.')
+            logger.info('Read chunked document from cache (key={}).', cached_name_chunking)
             return record
         except KeyNotExistsError:
             doc = self.doc_extractor.call({'url': url})
+            doc = redact_structured_doc(doc)
 
         total_token = 0
         for page in doc:
@@ -133,7 +140,7 @@ class DocParser(BaseTool):
         else:
             title = get_basename_from_url(url)
 
-        logger.info(f'Start chunking {url} ({title})...')
+        logger.info('Start chunking document {} (title={})...', url_key, title)
         time1 = time.time()
         if total_token <= max_ref_token:
             # The whole doc is one chunk
@@ -146,12 +153,12 @@ class DocParser(BaseTool):
                       },
                       token=total_token)
             ]
-            cached_name_chunking = f'{hash_sha256(url)}_without_chunking'
+            cached_name_chunking = f'{url_key}_without_chunking'
         else:
             content = self.split_doc_to_chunk(doc, url, title=title, parser_page_size=parser_page_size)
 
         time2 = time.time()
-        logger.info(f'Finished chunking {url} ({title}). Time spent: {time2 - time1} seconds.')
+        logger.info('Finished chunking document {} in {:.2f}s.', url_key, time2 - time1)
 
         # save the document data
         new_record = Record(url=url, raw=content, title=title).to_dict()

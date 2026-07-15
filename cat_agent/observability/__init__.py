@@ -8,6 +8,7 @@ from cat_agent.observability.context import RedactConfig, RunContext, run_contex
 from cat_agent.observability.emitter import clear_handlers, emit, register_handler, resolve_handlers
 from cat_agent.observability.events import AgentEvent, EventEnvelope
 from cat_agent.observability.handlers import (
+    AuditTrailHandler,
     BaseHandler,
     CallbackHandler,
     LoggingHandler,
@@ -18,6 +19,7 @@ from cat_agent.observability.handlers import (
 
 __all__ = [
     'AgentEvent',
+    'AuditTrailHandler',
     'BaseHandler',
     'CallbackHandler',
     'EventEnvelope',
@@ -36,3 +38,6 @@ __all__ = [
 
 if os.environ.get('CAT_AGENT_TRACE'):
     register_handler(LoggingHandler(level=os.environ.get('CAT_AGENT_TRACE_LEVEL', 'INFO')))
+
+if os.environ.get('CAT_AGENT_AUDIT', '').strip().lower() in {'1', 'true', 'yes', 'on'}:
+    register_handler(AuditTrailHandler())

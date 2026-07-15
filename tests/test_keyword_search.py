@@ -148,7 +148,7 @@ class TestKeywordSearch:
             KeywordSearch(cfg).sort_by_scores(query="machine", docs=[rec])
 
         native.RagIndex.assert_called_once()
-        native.RagIndex.load.assert_called_once_with(str(index_path))
+        native.RagIndex.load.assert_called_once()
         loaded_index.scores.assert_called_once()
 
     def test_missing_native_extension_raises_clear_error(self):

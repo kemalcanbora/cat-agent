@@ -7,6 +7,11 @@ import pytest
 from cat_agent.tools.storage import KeyNotExistsError, Storage, _norm_key
 
 
+@pytest.fixture(autouse=True)
+def _disable_encryption_by_default(monkeypatch):
+    monkeypatch.setenv('CAT_AGENT_ENCRYPT_AT_REST', '0')
+
+
 class TestStorage:
 
     @pytest.fixture

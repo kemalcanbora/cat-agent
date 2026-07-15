@@ -28,10 +28,21 @@ def resolve_handlers(
     run_handlers: List[BaseHandler] | None = None,
 ) -> List[BaseHandler]:
     if run_handlers is not None:
-        return list(run_handlers)
-    if agent_handlers:
-        return list(agent_handlers)
-    return get_default_handlers()
+        handlers = list(run_handlers)
+    elif agent_handlers:
+        handlers = list(agent_handlers)
+    else:
+        handlers = get_default_handlers()
+
+    from cat_agent.security.audit import is_audit_enabled
+
+    if is_audit_enabled():
+        from cat_agent.observability.handlers.audit_trail import AuditTrailHandler
+
+        audit_handler = AuditTrailHandler()
+        if not any(isinstance(handler, AuditTrailHandler) for handler in handlers):
+            handlers.append(audit_handler)
+    return handlers
 
 
 def emit(event: EventEnvelope) -> None:

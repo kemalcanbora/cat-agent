@@ -12,6 +12,7 @@
 
 import json
 import os
+import tempfile
 from collections import OrderedDict
 from hashlib import sha256
 from importlib import import_module
@@ -20,6 +21,7 @@ from typing import List, Tuple
 import json5
 
 from cat_agent.log import logger
+from cat_agent.security.encrypted_files import file_exists, read_bytes, read_json, write_bytes, write_json
 from cat_agent.settings import DEFAULT_MAX_REF_TOKEN, DEFAULT_WORKSPACE
 from cat_agent.tools.base import register_tool
 from cat_agent.tools.doc_parser import Record
@@ -101,25 +103,37 @@ class KeywordSearch(BaseSearch):
             self.rebuild_rag is not True
             and metadata.get('fingerprint') == cache_key
             and metadata.get('chunk_count') == len(all_chunks)
-            and os.path.isfile(self.index_path)
+            and file_exists(self.index_path)
         )
         if can_reuse:
             try:
-                logger.info(f'[KeywordSearch] Reusing Rust BM25 index at {self.index_path}')
-                return rag_index.load(self.index_path)
+                logger.info('[KeywordSearch] Reusing Rust BM25 index at {}', self.index_path)
+                return self._load_index_from_disk()
             except (OSError, RuntimeError, ValueError) as error:
-                logger.warning(f'[KeywordSearch] Failed to load persisted index; rebuilding: {error}')
+                logger.warning('[KeywordSearch] Failed to load persisted index; rebuilding: {}', error)
 
-        logger.info(f'[KeywordSearch] Building Rust BM25 index at {self.index_path}')
+        logger.info('[KeywordSearch] Building Rust BM25 index at {}', self.index_path)
         index = rag_index(tokenized_corpus)
         self._save_index(index, all_chunks, cache_key)
         return index
+
+    def _load_index_from_disk(self):
+        rag_index = _native().RagIndex
+        data = read_bytes(self.index_path)
+        if data is None:
+            raise FileNotFoundError(self.index_path)
+        with tempfile.NamedTemporaryFile(delete=False) as handle:
+            handle.write(data)
+            temp_path = handle.name
+        try:
+            return rag_index.load(temp_path)
+        finally:
+            os.unlink(temp_path)
 
     def _save_index(self, index, all_chunks, cache_key) -> None:
         os.makedirs(os.path.dirname(self.index_path) or '.', exist_ok=True)
         os.makedirs(os.path.dirname(self.meta_path) or '.', exist_ok=True)
         index_tmp = f'{self.index_path}.tmp'
-        meta_tmp = f'{self.meta_path}.tmp'
         metadata = {
             'fingerprint': cache_key,
             'chunk_count': len(all_chunks),
@@ -130,25 +144,17 @@ class KeywordSearch(BaseSearch):
         }
         try:
             index.save(index_tmp)
-            os.replace(index_tmp, self.index_path)
-            with open(meta_tmp, 'w', encoding='utf-8') as file:
-                json.dump(metadata, file, ensure_ascii=False)
-            os.replace(meta_tmp, self.meta_path)
+            with open(index_tmp, 'rb') as handle:
+                write_bytes(self.index_path, handle.read())
+            write_json(self.meta_path, metadata)
         except (OSError, TypeError) as error:
-            logger.warning(f'[KeywordSearch] Failed to persist Rust BM25 index: {error}')
-            for path in (index_tmp, meta_tmp):
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
+            logger.warning('[KeywordSearch] Failed to persist Rust BM25 index: {}', error)
+        finally:
+            if os.path.isfile(index_tmp):
+                os.remove(index_tmp)
 
     def _load_metadata(self) -> dict:
-        try:
-            with open(self.meta_path, encoding='utf-8') as file:
-                metadata = json.load(file)
-        except (OSError, ValueError, TypeError):
-            return {}
-        return metadata if isinstance(metadata, dict) else {}
+        return read_json(self.meta_path)
 
 
 def _corpus_fingerprint(docs: List[Record]) -> str:

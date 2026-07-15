@@ -64,3 +64,7 @@ def extract_usage(messages: List[Message]) -> Optional[dict]:
         if usage:
             return usage
     return None
+
+
+def messages_to_payload(messages: List[Message]) -> list:
+    return [message.model_dump() for message in (messages or [])]

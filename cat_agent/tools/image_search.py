@@ -20,8 +20,8 @@ import requests
 from pydantic import BaseModel, Field
 
 import socket
+from cat_agent.security.offline import guard_outbound_request
 from cat_agent.tools.base import BaseTool, register_tool
-from cat_agent.log import logger
 from cat_agent.llm.schema import Message, ContentItem
 from cat_agent.utils.utils import extract_images_from_messages
 
@@ -76,8 +76,10 @@ def serper_search(image_url: str, check_accessibility: bool = True, max_retry: i
     """
     if not SERPAPI_IMAGE_SEARCH_KEY:
         raise ValueError(
-            'SERPAPI_IMAGE_SEARCH_KEY is None! Please Apply for an apikey from https://serper.dev and set it as an environment variable by `export SERPAPI_IMAGE_SEARCH_KEY=xxxxxx`'
+            'SERPAPI_IMAGE_SEARCH_KEY is not set. image_search uses the SerpAPI cloud service '
+            'and is disabled by default for on-prem deployments.'
         )
+    guard_outbound_request(purpose=f'SerpAPI image search at {SERPAPI_URL}')
 
     payload = {
         'engine': 'google_reverse_image',  
@@ -126,7 +128,13 @@ def serper_search(image_url: str, check_accessibility: bool = True, max_retry: i
             time.sleep(random.uniform(0.1, 1))
     return []
 
-@register_tool('image_search', allow_overwrite=True)
+@register_tool(
+    'image_search',
+    allow_overwrite=True,
+    requires_network=True,
+    cloud_service=True,
+    register_by_default=False,
+)
 class ImageSearch(BaseTool):
     name = 'image_search'
     description = 'Image search engine, input the image and search for similar images with image information.'

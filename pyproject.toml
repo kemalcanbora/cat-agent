@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name = "cat-agent"
 dynamic = ["version", "readme"]
-description = "Cat-Agent: Enhancing LLMs with Agent Workflows, RAG, Function Calling, and Code Interpreter."
+description = "On-premise, sandboxed AI agent platform for regulated sectors."
 authors = [
     { name = "Kemalcan Bora", email = "kemalcanbora@gmail.com" },
 ]
@@ -24,6 +24,8 @@ dependencies = [
     "pillow",
     "python-dotenv",
     "loguru==0.7.3",
+    "cryptography>=42.0.0",
+    "keyring>=25.0.0",
 ]
 
 [project.optional-dependencies]
@@ -37,6 +39,9 @@ llama = [
     "llama-cpp-python>=0.3.16",
 ]
 wasm = [
+    "wasmtime==41.0.0",
+]
+wasm-bundled = [
     "wasmtime==41.0.0",
 ]
 local = [
@@ -80,14 +85,21 @@ code_interpreter = [
     "jupyter>=1.0.0",
     "uvicorn>=0.23.2",
 ]
+pii = [
+    "presidio-analyzer>=2.2.0",
+    "presidio-anonymizer>=2.2.0",
+]
 test = [
     "pytest",
     "pytest-cov",
     "rank_bm25",
 ]
 all = [
-    "cat-agent[rag,mcp,otel,python_executor,code_interpreter,transformers,llama,wasm,mlx]",
+    "cat-agent[rag,mcp,otel,python_executor,code_interpreter,transformers,llama,wasm-bundled,mlx]",
 ]
+
+[project.scripts]
+cat-agent = "cat_agent.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/kemalcanbora/cat-agent"
@@ -113,6 +125,8 @@ readme = { file = "README.md", content-type = "text/markdown" }
     "tools/resource/*.py",
     "tools/resource/docker_runtime/*.py",
     "tools/resource/docker_runtime/*.dockerfile",
+    "tools/resource/wasm_runtime/bin/python-3.11.1.wasm",
+    "tools/resource/wasm_runtime/usr/local/lib/python311.zip",
 ]
 
 [tool.maturin]

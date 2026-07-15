@@ -125,12 +125,30 @@ class Storage(BaseTool):
         root = self.cfg.get('storage_root_path', os.path.join(DEFAULT_WORKSPACE, 'tools', self.name))
         os.makedirs(root, exist_ok=True)
         self._root = root
+        encrypt_cfg = self.cfg.get('encrypt_at_rest')
+        if encrypt_cfg is None:
+            from cat_agent.security.at_rest import is_encrypt_at_rest_enabled
+
+            encrypt_cfg = is_encrypt_at_rest_enabled()
+        self._encrypt_at_rest = bool(encrypt_cfg)
+        self._encryption_key = None
+        if self._encrypt_at_rest:
+            from cat_agent.security.encrypted_cache import ensure_encrypted_cache_ready
+
+            self._encryption_key = ensure_encrypted_cache_ready(root)
         self._store = _SqliteStore(_sqlite_path(root))
 
-    def _store_for_path(self, path: Optional[str]) -> _SqliteStore:
+    def _store_for_path(self, path: Optional[str]) -> '_StorageHandle':
         if path is None:
-            return self._store
-        return _SqliteStore(_sqlite_path(path))
+            return _StorageHandle(self._store, self._encrypt_at_rest, self._encryption_key)
+        store = _SqliteStore(_sqlite_path(path))
+        key = None
+        encrypt = self._encrypt_at_rest
+        if encrypt:
+            from cat_agent.security.encrypted_cache import ensure_encrypted_cache_ready
+
+            key = ensure_encrypted_cache_ready(path)
+        return _StorageHandle(store, encrypt, key)
 
     def call(self, params: Union[str, dict], **kwargs) -> str:
         params = self._verify_json_format_args(params)
@@ -164,3 +182,45 @@ class Storage(BaseTool):
         if not kvs:
             return f'Scan Failed: {key} does not exist.'
         return '\n'.join([f'{k}: {v}' for k, v in sorted(kvs.items())])
+
+
+class _StorageHandle:
+    def __init__(self, store: _SqliteStore, encrypt_at_rest: bool, encryption_key):
+        self._store = store
+        self._encrypt_at_rest = encrypt_at_rest
+        self._encryption_key = encryption_key
+
+    def _prepare_write(self, value: str) -> str:
+        if not self._encrypt_at_rest:
+            return value
+        from cat_agent.security.encrypted_cache import maybe_encrypt_value
+
+        return maybe_encrypt_value(
+            value,
+            self._encryption_key,
+            encrypt_at_rest=True,
+        )
+
+    def _prepare_read(self, value: str) -> str:
+        if not self._encrypt_at_rest:
+            return value
+        from cat_agent.security.encrypted_cache import maybe_decrypt_value
+
+        return maybe_decrypt_value(
+            value,
+            self._encryption_key,
+            encrypt_at_rest=True,
+        )
+
+    def put(self, key: str, value: str) -> None:
+        self._store.put(key, self._prepare_write(value))
+
+    def get(self, key: str) -> str:
+        return self._prepare_read(self._store.get(key))
+
+    def delete(self, key: str) -> bool:
+        return self._store.delete(key)
+
+    def scan(self, key: str) -> Dict[str, str]:
+        kvs = self._store.scan(key)
+        return {stored_key: self._prepare_read(value) for stored_key, value in kvs.items()}
