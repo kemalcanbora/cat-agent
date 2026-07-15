@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from typing import Any, Optional
 
+from cat_agent.log import logger
 from cat_agent.security.at_rest import is_encrypt_at_rest_enabled, is_encrypted_at_rest_required
 from cat_agent.security.crypto import (
     EncryptionKeyError,
@@ -32,17 +33,36 @@ def _resolve_key(*, create_if_missing: bool) -> bytes:
     return resolve_encryption_key(create_if_missing=create_if_missing)
 
 
+def _encryption_key_if_available(*, create_if_missing: bool) -> Optional[bytes]:
+    try:
+        return _resolve_key(create_if_missing=create_if_missing)
+    except EncryptionKeyError:
+        if is_encrypted_at_rest_required():
+            raise
+        return None
+
+
+def _encryption_enabled(encrypt: Optional[bool]) -> bool:
+    return is_encrypt_at_rest_enabled() if encrypt is None else encrypt
+
+
 def write_bytes(path: str | Path, data: bytes, *, encrypt: Optional[bool] = None) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    use_encryption = is_encrypt_at_rest_enabled() if encrypt is None else encrypt
-    if use_encryption:
-        key = _resolve_key(create_if_missing=True)
+    key = None
+    if _encryption_enabled(encrypt):
+        key = _encryption_key_if_available(create_if_missing=True)
+    if key is not None:
         enc_path = Path(encrypted_path(path))
         enc_path.write_bytes(encrypt_bytes(data, key))
         if path.is_file() and not is_encrypted_bytes(path.read_bytes()[:4]):
             path.unlink()
         return
+    if _encryption_enabled(encrypt) and key is None:
+        logger.warning(
+            'Encryption is enabled but no key is available; writing plaintext to {}',
+            path,
+        )
     path.write_bytes(data)
     enc_path = Path(encrypted_path(path))
     if enc_path.is_file():
@@ -52,10 +72,13 @@ def write_bytes(path: str | Path, data: bytes, *, encrypt: Optional[bool] = None
 def read_bytes(path: str | Path, *, encrypt: Optional[bool] = None) -> Optional[bytes]:
     path = Path(path)
     enc_path = Path(encrypted_path(path))
-    use_encryption = is_encrypt_at_rest_enabled() if encrypt is None else encrypt
 
     if enc_path.is_file():
-        key = _resolve_key(create_if_missing=False)
+        key = _encryption_key_if_available(create_if_missing=False)
+        if key is None:
+            raise EncryptionKeyError(
+                f'Encrypted file exists at {enc_path} but no decryption key is available.'
+            )
         return decrypt_bytes(enc_path.read_bytes(), key)
 
     if not path.is_file():
@@ -63,10 +86,14 @@ def read_bytes(path: str | Path, *, encrypt: Optional[bool] = None) -> Optional[
 
     raw = path.read_bytes()
     if is_encrypted_bytes(raw):
-        key = _resolve_key(create_if_missing=False)
+        key = _encryption_key_if_available(create_if_missing=False)
+        if key is None:
+            raise EncryptionKeyError(
+                f'Encrypted file exists at {path} but no decryption key is available.'
+            )
         return decrypt_bytes(raw, key)
 
-    if use_encryption and is_encrypted_at_rest_required():
+    if _encryption_enabled(encrypt) and is_encrypted_at_rest_required():
         raise PlaintextStorageError(f'Plaintext file found at {path} while encrypted storage is required.')
     return raw
 
