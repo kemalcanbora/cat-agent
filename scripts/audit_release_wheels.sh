@@ -32,7 +32,6 @@ check_tag() {
 check_tag 'manylinux x86_64' 'manylinux.*x86_64'
 check_tag 'manylinux aarch64' 'manylinux.*aarch64'
 check_tag 'macOS arm64' 'macosx.*arm64'
-check_tag 'macOS x86_64' 'macosx.*x86_64'
 check_tag 'Windows amd64' 'win_amd64'
 
 echo "Found wheels:"

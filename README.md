@@ -357,7 +357,7 @@ Run any example from the repo root after installing the matching extras, e.g.
 Release wheels are built for **abi3 Python 3.10+** on:
 
 - Linux x86_64 and aarch64 (`manylinux`)
-- macOS arm64 and x86_64
+- macOS arm64
 - Windows amd64
 
 ```bash

@@ -38,8 +38,6 @@ jobs:
             label: manylinux-aarch64
           - os: macos-latest
             label: macosx-arm64
-          - os: macos-13
-            label: macosx-x86_64
           - os: windows-latest
             label: win-amd64
     runs-on: ${{ matrix.os }}
