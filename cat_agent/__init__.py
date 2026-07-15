@@ -1,4 +1,4 @@
-__version__ = "0.7.0"
+__version__ = "0.7.1"
 
 from cat_agent.security.offline import install_offline_guards
 
