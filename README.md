@@ -147,10 +147,11 @@ docker compose -f deploy/docker-compose.yml up
 
 See [deploy/README.md](deploy/README.md) for volume layout (workspace, models, audit).
 
-Release artifacts include a CycloneDX SBOM (`sbom-cat-agent.cdx.json`). Generate locally:
+Release artifacts include a CycloneDX SBOM (`sbom-cat-agent.cdx.json`) attached to the
+GitHub release (not uploaded to PyPI). Generate locally:
 
 ```bash
-./scripts/generate_sbom.sh dist/
+./scripts/generate_sbom.sh sbom/
 ```
 
 ### Tamper-evident audit trail (AI Act-ready)
