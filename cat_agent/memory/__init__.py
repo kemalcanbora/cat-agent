@@ -14,4 +14,20 @@ from .memory import Memory
 
 __all__ = [
     'Memory',
+    'MemoryManager',
+    'MemoryRecord',
+    'MemoryStore',
 ]
+
+
+def __getattr__(name):
+    # Lazy imports to avoid circular dependency with cat_agent.Agent at import time.
+    if name == 'MemoryManager':
+        from .manager import MemoryManager
+
+        return MemoryManager
+    if name in ('MemoryRecord', 'MemoryStore'):
+        from . import store
+
+        return getattr(store, name)
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

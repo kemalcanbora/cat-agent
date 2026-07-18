@@ -218,6 +218,50 @@ pip install 'cat-agent[pii]'
 
 Cloud-backed tools (`image_search` via SerpAPI, legacy `WEB_SEARCH_BACKEND=serper`) require explicit opt-in via `cat_agent.tools.enable_optional_tools(...)` and are blocked when offline mode is on.
 
+### Long-term agent memory
+
+Give any `Assistant` persistent, cross-session memory with `memory_cfg`:
+
+```python
+from cat_agent.agents import Assistant
+
+agent = Assistant(
+    llm=llm_cfg,
+    memory_cfg={
+        'scope': 'user:alice',            # cross-session namespace
+        'top_k': 5,                       # memories recalled per query
+        'auto_record': True,              # store each completed exchange
+        'auto_summarize': True,           # compact long histories via the LLM
+        'session_window_tokens': 8000,    # dialogue token budget before compaction
+    },
+)
+```
+
+What it does on every run:
+
+1. **Recall** — the last user query is embedded (offline hash embeddings + native
+   HNSW index) and the top-k relevant memories are injected into the system prompt.
+2. **Compaction** — when history exceeds the token budget, older turns are
+   summarized by the LLM into a `summary` memory; recent turns stay verbatim.
+3. **Auto-record** — completed user/assistant exchanges are stored as `episode`
+   memories, so the next session can recall them.
+
+Programmatic access via `MemoryManager` / `MemoryStore`:
+
+```python
+from cat_agent.memory import MemoryManager
+
+memory = MemoryManager(cfg={'scope': 'user:alice'})
+memory.remember('Alice prefers reports in Turkish', kind='fact')
+memory.recall('what language should the report use?')
+memory.forget(memory_id)
+```
+
+Memory records live in `workspace/memory/memories.sqlite` and are encrypted at
+rest (AES-GCM) with the same key management as all other Cat-Agent storage.
+Everything runs fully offline — recall uses hash embeddings by default, or set
+`embedding_backend: 'onnx'` with a local model for semantic vectors.
+
 ### CLI (`cat-agent`)
 
 | Command | Purpose |
@@ -258,6 +302,7 @@ a local Rust toolchain.
 - **Graph workflows (DAG)** — Compose agents and tools into branching/looping graphs with `StateGraph`; a compiled graph is itself an `Agent`
 - **Function calling** — Native tool/function support for LLMs
 - **RAG** — Native keyword (BM25), vector (HNSW), and hybrid search; no LangChain/FAISS/LEANN
+- **Long-term memory** — Encrypted cross-session memory with vector recall and automatic history compaction (`memory_cfg`)
 - **Code interpreter** — Safe Python execution via Docker or WASM sandbox (no Docker required)
 - **Rich tool set** — Doc parsing, RAG, MCP, storage, WASM sandbox; network tools (web search, image search) are opt-in
 - **Multiple LLM backends** — OpenAI-compatible APIs (base install); Transformers, LlamaCpp, MLX-LM, OpenVINO via optional extras
@@ -549,6 +594,7 @@ bot = Assistant(
 | `examples/rag_keyword/` | Rust BM25 keyword search |
 | `examples/rag_vector/` | Native HNSW vector search |
 | `examples/rag_native/` | Chunking + vector + truncation pipeline |
+| `examples/long_term_memory/` | Cross-session memory, recall, and compaction |
 | `examples/wasm_code_interpreter/` | WASM sandbox execution |
 | `examples/logging_demo/` | Loguru configuration |
 

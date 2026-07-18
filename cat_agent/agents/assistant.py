@@ -87,7 +87,16 @@ class Assistant(FnCallAgent):
                  description: Optional[str] = None,
                  files: Optional[List[str]] = None,
                  rag_cfg: Optional[Dict] = None,
+                 memory_cfg: Optional[Dict] = None,
                  handlers: Optional[List] = None):
+        """Initialization the assistant.
+
+        Args:
+            memory_cfg: Optional long-term memory configuration. When provided,
+              relevant memories are recalled into the system prompt, completed
+              exchanges are stored across sessions, and long histories are
+              compacted via LLM summarization. See MemoryManager for keys.
+        """
         super().__init__(function_list=function_list,
                          llm=llm,
                          system_message=system_message,
@@ -96,6 +105,11 @@ class Assistant(FnCallAgent):
                          files=files,
                          rag_cfg=rag_cfg,
                          handlers=handlers)
+        self.memory_manager = None
+        if memory_cfg is not None:
+            from cat_agent.memory.manager import MemoryManager
+
+            self.memory_manager = MemoryManager(cfg=memory_cfg, llm=self.llm)
 
     def _run(self,
              messages: List[Message],
@@ -109,9 +123,17 @@ class Assistant(FnCallAgent):
               it will be used directly without retrieving information from files in messages.
 
         """
+        original_messages = messages
+        if self.memory_manager is not None:
+            messages = self.memory_manager.compact_messages(messages)
+            messages = self.memory_manager.inject_memories(messages)
 
         new_messages = self._prepend_knowledge_prompt(messages=messages, lang=lang, knowledge=knowledge, **kwargs)
-        return super()._run(messages=new_messages, lang=lang, **kwargs)
+        response: List[Message] = []
+        for response in super()._run(messages=new_messages, lang=lang, **kwargs):
+            yield response
+        if self.memory_manager is not None and response:
+            self.memory_manager.record_exchange(original_messages, response)
 
     def _prepend_knowledge_prompt(self,
                                   messages: List[Message],
