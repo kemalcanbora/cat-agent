@@ -117,6 +117,17 @@ class LoggingHandler:
                 payload.get('error_message'),
                 payload.get('delay_seconds'),
             )
+        elif event.event_type == 'rate_limit.wait':
+            logger.log(
+                self.level,
+                'rate_limit.wait trace={} run={} agent={} scope={} waited={} tool={}',
+                trace,
+                run,
+                agent,
+                payload.get('scope'),
+                payload.get('waited_seconds'),
+                payload.get('tool_name'),
+            )
         elif event.event_type == 'llm.chunk':
             logger.debug(
                 'llm.chunk trace={} run={} agent={} chunk={} messages={}',

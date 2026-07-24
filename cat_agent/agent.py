@@ -88,9 +88,13 @@ class Agent(ABC):
             name: The name of this agent.
             description: The description of this agent, which will be used for multi_agent.
             handlers: Optional observability handlers for run, LLM, and tool events.
+            rate_limiter: Optional shared :class:`~cat_agent.utils.rate_limit.RateLimiter`
+              applied to LLM calls for this agent. Tools may declare their own via
+              ``cfg['rate_limiter']`` / ``cfg['rate_limit']``.
         """
         if handlers is None:
             handlers = kwargs.pop('handlers', None)
+        rate_limiter = kwargs.pop('rate_limiter', None)
         if isinstance(llm, dict):
             self.llm = get_chat_model(llm)
         else:
@@ -108,6 +112,8 @@ class Agent(ABC):
         self._handlers = handlers or []
         self._async_closed = False
         self._async_inflight = 0
+        from cat_agent.utils.rate_limit import RateLimiter
+        self.rate_limiter = RateLimiter.from_cfg(rate_limiter) if rate_limiter is not None else None
 
     def run_nonstream(self, messages: List[Union[Dict, Message]], **kwargs) -> Union[List[Message], List[Dict]]:
         """Same as self.run, but with stream=False,
@@ -552,17 +558,28 @@ class Agent(ABC):
                 **audit_meta,
             )
 
-        if ctx is None or not ctx.handlers:
-            final_output: List[Message] = []
-            for output in self.llm.chat(
+        def _chat_iter():
+            return self.llm.chat(
                 messages=messages_for_llm,
                 functions=functions,
                 stream=stream,
                 extra_generate_cfg=extra_cfg,
-            ):
-                if output:
-                    final_output = output
-                yield output
+            )
+
+        if ctx is None or not ctx.handlers:
+            final_output: List[Message] = []
+            if self.rate_limiter is not None:
+                with self.rate_limiter.limit() as waited:
+                    self._emit_rate_limit_wait(scope='llm', waited_seconds=waited)
+                    for output in _chat_iter():
+                        if output:
+                            final_output = output
+                        yield output
+            else:
+                for output in _chat_iter():
+                    if output:
+                        final_output = output
+                    yield output
             if is_audit_enabled() and final_output:
                 append_audit_record(
                     'audit.model_output',
@@ -588,27 +605,33 @@ class Agent(ABC):
             started_at = time.monotonic()
             chunk_count = 0
             final_output = []
-            for output in self.llm.chat(
-                messages=messages_for_llm,
-                functions=functions,
-                stream=stream,
-                extra_generate_cfg=extra_cfg,
-            ):
-                chunk_count += 1
-                if output:
-                    final_output = output
-                if ctx.emit_stream_chunks:
-                    emit(AgentEvent.llm_chunk(
-                        trace_id=ctx.trace_id,
-                        run_id=ctx.run_id,
-                        span_id=span_id,
-                        parent_span_id=ctx.parent_span_id,
-                        agent_name=ctx.agent_name,
-                        agent_class=ctx.agent_class,
-                        chunk_index=chunk_count,
-                        message_count=len(output or []),
-                    ))
-                yield output
+
+            def _consume_chat():
+                nonlocal chunk_count, final_output
+                for output in _chat_iter():
+                    chunk_count += 1
+                    if output:
+                        final_output = output
+                    if ctx.emit_stream_chunks:
+                        emit(AgentEvent.llm_chunk(
+                            trace_id=ctx.trace_id,
+                            run_id=ctx.run_id,
+                            span_id=span_id,
+                            parent_span_id=ctx.parent_span_id,
+                            agent_name=ctx.agent_name,
+                            agent_class=ctx.agent_class,
+                            chunk_index=chunk_count,
+                            message_count=len(output or []),
+                        ))
+                    yield output
+
+            if self.rate_limiter is not None:
+                with self.rate_limiter.limit() as waited:
+                    self._emit_rate_limit_wait(
+                        scope='llm', waited_seconds=waited, span_id=span_id)
+                    yield from _consume_chat()
+            else:
+                yield from _consume_chat()
             emit(AgentEvent.llm_end(
                 trace_id=ctx.trace_id,
                 run_id=ctx.run_id,
@@ -678,8 +701,15 @@ class Agent(ABC):
 
             return await asyncio.to_thread(_collect)
 
+        async def _invoke_limited() -> List[Message]:
+            if self.rate_limiter is None:
+                return await _invoke()
+            async with self.rate_limiter.limit_async() as waited:
+                self._emit_rate_limit_wait(scope='llm', waited_seconds=waited)
+                return await _invoke()
+
         if ctx is None or not ctx.handlers:
-            final_output = await _invoke()
+            final_output = await _invoke_limited()
             if is_audit_enabled() and final_output:
                 append_audit_record(
                     'audit.model_output',
@@ -703,7 +733,13 @@ class Agent(ABC):
                 tool_count=tool_count,
             ))
             started_at = time.monotonic()
-            final_output = await _invoke()
+            if self.rate_limiter is not None:
+                async with self.rate_limiter.limit_async() as waited:
+                    self._emit_rate_limit_wait(
+                        scope='llm', waited_seconds=waited, span_id=span_id)
+                    final_output = await _invoke()
+            else:
+                final_output = await _invoke()
             emit(AgentEvent.llm_end(
                 trace_id=ctx.trace_id,
                 run_id=ctx.run_id,
@@ -910,6 +946,31 @@ class Agent(ABC):
             delay_seconds=delay_seconds,
         ))
 
+    def _emit_rate_limit_wait(
+        self,
+        *,
+        scope: str,
+        waited_seconds: float,
+        tool_name: Optional[str] = None,
+        span_id: Optional[str] = None,
+    ) -> None:
+        if waited_seconds <= 0:
+            return
+        ctx = get_run_context()
+        if ctx is None or not ctx.handlers:
+            return
+        emit(AgentEvent.rate_limit_wait(
+            trace_id=ctx.trace_id,
+            run_id=ctx.run_id,
+            span_id=span_id or ctx.span_id,
+            parent_span_id=ctx.parent_span_id,
+            agent_name=ctx.agent_name,
+            agent_class=ctx.agent_class,
+            scope=scope,
+            waited_seconds=waited_seconds,
+            tool_name=tool_name,
+        ))
+
     def _execute_tool(
         self,
         tool_name: str,
@@ -935,11 +996,23 @@ class Agent(ABC):
         if attempt_timeout is not None:
             warn_sync_attempt_timeout(tool_name, attempt_timeout)
         call_kwargs = prepare_tool_call_kwargs(tool, kwargs, attempt_timeout)
+        from cat_agent.utils.rate_limit import rate_limiter_for_tool
+        tool_limiter = rate_limiter_for_tool(tool)
         last_exc: Optional[BaseException] = None
 
         for attempt in range(1, max_attempts + 1):
             try:
-                tool_result = tool.call(tool_args, **call_kwargs)
+                if tool_limiter is not None:
+                    with tool_limiter.limit() as waited:
+                        self._emit_rate_limit_wait(
+                            scope='tool',
+                            waited_seconds=waited,
+                            tool_name=tool_name,
+                            span_id=obs_span_id,
+                        )
+                        tool_result = tool.call(tool_args, **call_kwargs)
+                else:
+                    tool_result = tool.call(tool_args, **call_kwargs)
             except (ToolServiceError, DocParserError) as ex:
                 last_exc = ex
                 if retry_cfg and attempt < max_attempts and retry_cfg.is_retryable(ex):
@@ -1164,6 +1237,8 @@ class Agent(ABC):
         # Whole-run deadline may further tighten this attempt.
         run_deadline = kwargs.pop('_run_deadline', None)
         call_kwargs = prepare_tool_call_kwargs(tool, kwargs, attempt_timeout)
+        from cat_agent.utils.rate_limit import rate_limiter_for_tool
+        tool_limiter = rate_limiter_for_tool(tool)
         last_exc: Optional[BaseException] = None
 
         for attempt in range(1, max_attempts + 1):
@@ -1183,10 +1258,25 @@ class Agent(ABC):
                     effective_timeout = min(effective_timeout, remaining)
 
             try:
-                coro = tool.acall(tool_args, **call_kwargs)
+                async def _invoke():
+                    return await tool.acall(tool_args, **call_kwargs)
+
+                async def _invoke_limited():
+                    if tool_limiter is None:
+                        return await _invoke()
+                    async with tool_limiter.limit_async() as waited:
+                        self._emit_rate_limit_wait(
+                            scope='tool',
+                            waited_seconds=waited,
+                            tool_name=tool_name,
+                            span_id=obs_span_id,
+                        )
+                        return await _invoke()
+
                 if effective_timeout is not None:
                     try:
-                        tool_result = await asyncio.wait_for(coro, timeout=effective_timeout)
+                        tool_result = await asyncio.wait_for(
+                            _invoke_limited(), timeout=effective_timeout)
                     except asyncio.TimeoutError as ex:
                         # Abandon the wait. Sync work inside to_thread keeps running but
                         # cannot write into agent message history / observability: those
@@ -1216,7 +1306,7 @@ class Agent(ABC):
                         wrapped.attempts = attempt  # type: ignore[attr-defined]
                         raise wrapped from ex
                 else:
-                    tool_result = await coro
+                    tool_result = await _invoke_limited()
             except asyncio.CancelledError:
                 raise
             except (ToolServiceError, DocParserError) as ex:

@@ -337,6 +337,37 @@ class AgentEvent:
         )
 
     @staticmethod
+    def rate_limit_wait(
+        *,
+        trace_id: str,
+        run_id: str,
+        span_id: str,
+        parent_span_id: Optional[str],
+        agent_name: Optional[str],
+        agent_class: str,
+        scope: str,
+        waited_seconds: float,
+        tool_name: Optional[str] = None,
+    ) -> EventEnvelope:
+        payload: Dict[str, Any] = {
+            'scope': scope,
+            'waited_seconds': waited_seconds,
+        }
+        if tool_name is not None:
+            payload['tool_name'] = tool_name
+        return EventEnvelope(
+            event_type='rate_limit.wait',
+            timestamp=_utc_timestamp(),
+            trace_id=trace_id,
+            run_id=run_id,
+            span_id=span_id,
+            parent_span_id=parent_span_id,
+            agent_name=agent_name,
+            agent_class=agent_class,
+            payload=payload,
+        )
+
+    @staticmethod
     def node_start(
         *,
         trace_id: str,
