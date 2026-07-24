@@ -31,12 +31,13 @@ On-prem security platform for regulated sectors:
 - **SBOM** — CycloneDX bill of materials generated on each release
 - **CLI** — `cat-agent offline-check`, `encrypt-storage`, `fetch-runtime`, and more
 
-### What's new in 0.8.0
+### What's new in 0.8.1
 
-- **`@tool` decorator** — define tools from typed functions; schemas from type hints + docstrings
-- **Async API** — `arun` / `arun_nonstream` with concurrent tool calls in one model turn
-- **Multi-agent package** — blackboard, handoff, ask-agent, and artifact tools for `GroupChat` teams
-- **GGUF path resolve** — HF hub / `~/models` cache lookup for `llama_cpp` models
+- **Tool retry** — opt-in per-tool retries with shared exponential backoff; attempts stay out of message history
+- **Timeouts** — `attempt_timeout` (async) and `run_timeout`; sync path warns instead of faking interrupts
+- **Rate limiting** — shareable token-bucket + concurrency cap for LLM and tools (no process global)
+- **code_interpreter `timeout` cfg** — `{'name': 'code_interpreter', 'timeout': 10}` now arms the kernel timer
+- **Example** — `examples/tool_resilience/` (local llama_cpp; requires model download)
 
 ### Security & on-prem controls
 
@@ -688,6 +689,7 @@ bot = Assistant(
 | Path | Topic |
 |---|---|
 | `examples/tool_decorator/` | `@tool` function decorator |
+| `examples/tool_resilience/` | Tool retry, attempt_timeout, rate limiting (llama_cpp; needs model) |
 | `examples/async_agent/` | `arun` + parallel tools (PhysicsGuy / llama_cpp) |
 | `examples/transformers_math_guy/` | Transformers + function calling |
 | `examples/llama_cpp_math_guy/` | LlamaCpp + tools |
