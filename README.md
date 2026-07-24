@@ -31,7 +31,7 @@ On-prem security platform for regulated sectors:
 - **SBOM** — CycloneDX bill of materials generated on each release
 - **CLI** — `cat-agent offline-check`, `encrypt-storage`, `fetch-runtime`, and more
 
-### Recent additions (post-0.7)
+### What's new in 0.8.0
 
 - **`@tool` decorator** — define tools from typed functions; schemas from type hints + docstrings
 - **Async API** — `arun` / `arun_nonstream` with concurrent tool calls in one model turn
