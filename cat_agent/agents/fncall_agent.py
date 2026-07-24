@@ -41,7 +41,11 @@ class FnCallAgent(Agent):
 
         Args:
             function_list: One list of tool name, tool configuration or Tool object,
-              such as 'code_interpreter', {'name': 'code_interpreter', 'timeout': 10}, or CodeInterpreter().
+              such as 'code_interpreter',
+              {'name': 'code_interpreter', 'timeout': 10},  # tool-owned kernel timer
+              {'name': 'web_search', 'attempt_timeout': 15},
+              or CodeInterpreter().
+              See Agent.__init__ for timeout vs attempt_timeout.
             llm: The LLM model configuration or LLM model object.
               Set the configuration as {'model': '', 'api_key': '', 'model_server': ''}.
             system_message: The specified system message for LLM chat.

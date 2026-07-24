@@ -109,8 +109,13 @@ class CodeInterpreter(BaseToolWithFileAccess):
                 fmt = 'Enclose the code within triple backticks (`) at the beginning and end of the code.'
         return fmt
 
-    def call(self, params: Union[str, dict], files: List[str] = None, timeout: Optional[int] = 30, **kwargs) -> str:
+    def call(self, params: Union[str, dict], files: List[str] = None, timeout: Optional[int] = None, **kwargs) -> str:
         super().call(params=params, files=files)  # copy remote files to work_dir
+
+        if timeout is None:
+            # Tool-owned timeout from cfg (e.g. {'name': 'code_interpreter', 'timeout': 10}).
+            # Distinct from agent-layer attempt_timeout — see cat_agent.tools.timeout.
+            timeout = int(self.cfg.get('timeout', 30))
 
         try:
             params = json5.loads(params)

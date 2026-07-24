@@ -75,7 +75,13 @@ class Agent(ABC):
 
         Args:
             function_list: One list of tool name, tool configuration or Tool object,
-              such as 'code_interpreter', {'name': 'code_interpreter', 'timeout': 10}, or CodeInterpreter().
+              such as 'code_interpreter',
+              {'name': 'code_interpreter', 'timeout': 10},  # tool-owned kernel timer
+              {'name': 'web_search', 'attempt_timeout': 15, 'retry': {'max_attempts': 3}},
+              or CodeInterpreter().
+              ``timeout`` is tool-owned (honored by tools that implement it, e.g.
+              code_interpreter). ``attempt_timeout`` is the agent-layer per-attempt
+              deadline (async only; sync path warns and does not enforce a wait).
             llm: The LLM model configuration or LLM model object.
               Set the configuration as {'model': '', 'api_key': '', 'model_server': ''}.
             system_message: The specified system message for LLM chat.
@@ -149,6 +155,14 @@ class Agent(ABC):
             else:
                 new_messages.append(msg)
                 _return_message_type = 'message'
+
+        if kwargs.get('run_timeout') is not None:
+            warnings.warn(
+                'run_timeout is not enforceable on the sync run() path; ignoring. Use arun().',
+                UserWarning,
+                stacklevel=2,
+            )
+            kwargs.pop('run_timeout', None)
 
         if 'lang' not in kwargs:
             if has_chinese_messages(new_messages):
@@ -295,6 +309,13 @@ class Agent(ABC):
         self._async_inflight += 1
         try:
             new_messages, return_message_type, kwargs = self._normalize_run_inputs(messages, **kwargs)
+            run_timeout = kwargs.pop('run_timeout', None)
+            if run_timeout is not None:
+                run_timeout = float(run_timeout)
+                if run_timeout <= 0:
+                    run_timeout = None
+            if run_timeout is not None:
+                kwargs['_run_deadline'] = time.monotonic() + run_timeout
             handlers = resolve_handlers(self._handlers, kwargs.get('handlers'))
             emit_stream_chunks = bool(kwargs.get('emit_stream_chunks'))
             if handlers:
@@ -900,16 +921,25 @@ class Agent(ABC):
             raise ToolNotFoundError(tool_name)
         tool = self.function_map[tool_name]
         from cat_agent.tools.retry import retry_config_for_tool
+        from cat_agent.tools.timeout import (
+            attempt_timeout_for_tool,
+            prepare_tool_call_kwargs,
+            warn_sync_attempt_timeout,
+        )
         from cat_agent.utils.backoff import compute_backoff_delay
 
         retry_cfg = retry_config_for_tool(tool)
         max_attempts = retry_cfg.max_attempts if retry_cfg else 1
         delay = retry_cfg.initial_delay if retry_cfg else 1.0
+        attempt_timeout = attempt_timeout_for_tool(tool)
+        if attempt_timeout is not None:
+            warn_sync_attempt_timeout(tool_name, attempt_timeout)
+        call_kwargs = prepare_tool_call_kwargs(tool, kwargs, attempt_timeout)
         last_exc: Optional[BaseException] = None
 
         for attempt in range(1, max_attempts + 1):
             try:
-                tool_result = tool.call(tool_args, **kwargs)
+                tool_result = tool.call(tool_args, **call_kwargs)
             except (ToolServiceError, DocParserError) as ex:
                 last_exc = ex
                 if retry_cfg and attempt < max_attempts and retry_cfg.is_retryable(ex):
@@ -1120,16 +1150,73 @@ class Agent(ABC):
             raise ToolNotFoundError(tool_name)
         tool = self.function_map[tool_name]
         from cat_agent.tools.retry import retry_config_for_tool
+        from cat_agent.tools.timeout import (
+            attempt_timeout_for_tool,
+            format_tool_timeout_error,
+            prepare_tool_call_kwargs,
+        )
         from cat_agent.utils.backoff import compute_backoff_delay
 
         retry_cfg = retry_config_for_tool(tool)
         max_attempts = retry_cfg.max_attempts if retry_cfg else 1
         delay = retry_cfg.initial_delay if retry_cfg else 1.0
+        attempt_timeout = attempt_timeout_for_tool(tool)
+        # Whole-run deadline may further tighten this attempt.
+        run_deadline = kwargs.pop('_run_deadline', None)
+        call_kwargs = prepare_tool_call_kwargs(tool, kwargs, attempt_timeout)
         last_exc: Optional[BaseException] = None
 
         for attempt in range(1, max_attempts + 1):
+            effective_timeout = attempt_timeout
+            if run_deadline is not None:
+                remaining = run_deadline - time.monotonic()
+                if remaining <= 0:
+                    wrapped = ToolExecutionError(
+                        tool_name,
+                        format_tool_timeout_error(tool_name, attempt_timeout or 0.0),
+                    )
+                    wrapped.attempts = attempt  # type: ignore[attr-defined]
+                    raise wrapped
+                if effective_timeout is None:
+                    effective_timeout = remaining
+                else:
+                    effective_timeout = min(effective_timeout, remaining)
+
             try:
-                tool_result = await tool.acall(tool_args, **kwargs)
+                coro = tool.acall(tool_args, **call_kwargs)
+                if effective_timeout is not None:
+                    try:
+                        tool_result = await asyncio.wait_for(coro, timeout=effective_timeout)
+                    except asyncio.TimeoutError as ex:
+                        # Abandon the wait. Sync work inside to_thread keeps running but
+                        # cannot write into agent message history / observability: those
+                        # updates happen only after this method returns.
+                        error_message = format_tool_timeout_error(
+                            tool_name, float(effective_timeout))
+                        logger.warning(error_message)
+                        wrapped = ToolExecutionError(tool_name, error_message)
+                        wrapped.__cause__ = ex
+                        last_exc = wrapped
+                        if retry_cfg and attempt < max_attempts and retry_cfg.is_retryable(wrapped):
+                            self._emit_tool_retry(
+                                tool_name=tool_name,
+                                attempt=attempt,
+                                max_attempts=max_attempts,
+                                exc=wrapped,
+                                delay_seconds=delay,
+                                span_id=obs_span_id,
+                            )
+                            await asyncio.sleep(delay)
+                            delay = compute_backoff_delay(
+                                delay,
+                                exponential_base=retry_cfg.exponential_base,
+                                max_delay=retry_cfg.max_delay,
+                            )
+                            continue
+                        wrapped.attempts = attempt  # type: ignore[attr-defined]
+                        raise wrapped from ex
+                else:
+                    tool_result = await coro
             except asyncio.CancelledError:
                 raise
             except (ToolServiceError, DocParserError) as ex:
