@@ -164,6 +164,8 @@ class FnCallAgent(Agent):
 
                 hard_errors: List[BaseException] = []
                 for (out, tool_name, _), result in zip(tool_jobs, results):
+                    if isinstance(result, asyncio.CancelledError):
+                        raise result
                     if isinstance(result, (ToolServiceError, DocParserError)):
                         hard_errors.append(result)
                         continue

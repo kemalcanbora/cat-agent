@@ -103,6 +103,20 @@ class LoggingHandler:
                 payload.get('error_type'),
                 payload.get('error_message'),
             )
+        elif event.event_type == 'tool.retry':
+            logger.log(
+                self.level,
+                'tool.retry trace={} run={} agent={} tool={} attempt={}/{} error={}: {} delay={}',
+                trace,
+                run,
+                agent,
+                payload.get('tool_name'),
+                payload.get('attempt'),
+                payload.get('max_attempts'),
+                payload.get('error_type'),
+                payload.get('error_message'),
+                payload.get('delay_seconds'),
+            )
         elif event.event_type == 'llm.chunk':
             logger.debug(
                 'llm.chunk trace={} run={} agent={} chunk={} messages={}',

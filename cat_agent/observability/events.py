@@ -243,7 +243,16 @@ class AgentEvent:
         duration_ms: float,
         success: bool,
         result_chars: int,
+        attempts: Optional[int] = None,
     ) -> EventEnvelope:
+        payload: Dict[str, Any] = {
+            'tool_name': tool_name,
+            'duration_ms': duration_ms,
+            'success': success,
+            'result_chars': result_chars,
+        }
+        if attempts is not None:
+            payload['attempts'] = attempts
         return EventEnvelope(
             event_type='tool.end',
             timestamp=_utc_timestamp(),
@@ -253,12 +262,7 @@ class AgentEvent:
             parent_span_id=parent_span_id,
             agent_name=agent_name,
             agent_class=agent_class,
-            payload={
-                'tool_name': tool_name,
-                'duration_ms': duration_ms,
-                'success': success,
-                'result_chars': result_chars,
-            },
+            payload=payload,
         )
 
     @staticmethod
@@ -274,7 +278,16 @@ class AgentEvent:
         duration_ms: float,
         error_type: str,
         error_message: str,
+        attempts: Optional[int] = None,
     ) -> EventEnvelope:
+        payload: Dict[str, Any] = {
+            'tool_name': tool_name,
+            'duration_ms': duration_ms,
+            'error_type': error_type,
+            'error_message': error_message,
+        }
+        if attempts is not None:
+            payload['attempts'] = attempts
         return EventEnvelope(
             event_type='tool.error',
             timestamp=_utc_timestamp(),
@@ -284,11 +297,42 @@ class AgentEvent:
             parent_span_id=parent_span_id,
             agent_name=agent_name,
             agent_class=agent_class,
+            payload=payload,
+        )
+
+    @staticmethod
+    def tool_retry(
+        *,
+        trace_id: str,
+        run_id: str,
+        span_id: str,
+        parent_span_id: Optional[str],
+        agent_name: Optional[str],
+        agent_class: str,
+        tool_name: str,
+        attempt: int,
+        max_attempts: int,
+        error_type: str,
+        error_message: str,
+        delay_seconds: float,
+    ) -> EventEnvelope:
+        """Emitted between attempts; not a span boundary (OTel ignores non start/end/error)."""
+        return EventEnvelope(
+            event_type='tool.retry',
+            timestamp=_utc_timestamp(),
+            trace_id=trace_id,
+            run_id=run_id,
+            span_id=span_id,
+            parent_span_id=parent_span_id,
+            agent_name=agent_name,
+            agent_class=agent_class,
             payload={
                 'tool_name': tool_name,
-                'duration_ms': duration_ms,
+                'attempt': attempt,
+                'max_attempts': max_attempts,
                 'error_type': error_type,
                 'error_message': error_message,
+                'delay_seconds': delay_seconds,
             },
         )
 

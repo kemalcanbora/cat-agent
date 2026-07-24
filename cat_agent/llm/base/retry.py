@@ -1,10 +1,10 @@
 """Retry helpers with exponential backoff for model-service calls."""
 
-import random
 import time
 from typing import Any, Iterator, Tuple
 
 from cat_agent.log import logger
+from cat_agent.utils.backoff import compute_backoff_delay
 
 
 def retry_model_service(
@@ -69,7 +69,11 @@ def _raise_or_delay(
         raise ModelServiceError(exception=Exception(f'Maximum number of retries ({max_retries}) exceeded.'))
 
     num_retries += 1
-    jitter = 1.0 + random.random()
-    delay = min(delay * exponential_base, max_delay) * jitter
+    delay = compute_backoff_delay(
+        delay,
+        exponential_base=exponential_base,
+        max_delay=max_delay,
+        jitter=True,
+    )
     time.sleep(delay)
     return num_retries, delay

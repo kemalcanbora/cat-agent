@@ -730,7 +730,7 @@ class Agent(ABC):
 
         if ctx is None or not ctx.handlers:
             try:
-                tool_result = self._execute_tool(tool_name, tool_args, **kwargs)
+                tool_result, _attempts = self._execute_tool(tool_name, tool_args, **kwargs)
             except (ToolNotFoundError, ToolExecutionError) as ex:
                 if is_audit_enabled():
                     append_audit_record(
@@ -767,9 +767,12 @@ class Agent(ABC):
                 tool_args=format_tool_args(tool_args, ctx),
             ))
             started_at = time.monotonic()
+            attempts = 1
             try:
-                tool_result = self._execute_tool(tool_name, tool_args, **kwargs)
+                tool_result, attempts = self._execute_tool(
+                    tool_name, tool_args, _obs_span_id=span_id, **kwargs)
             except (ToolNotFoundError, ToolExecutionError) as ex:
+                attempts = getattr(ex, 'attempts', attempts)
                 emit(AgentEvent.tool_error(
                     trace_id=ctx.trace_id,
                     run_id=ctx.run_id,
@@ -781,6 +784,7 @@ class Agent(ABC):
                     duration_ms=(time.monotonic() - started_at) * 1000,
                     error_type=type(ex).__name__,
                     error_message=str(ex.message or ex),
+                    attempts=attempts,
                 ))
                 emit(AgentEvent.tool_end(
                     trace_id=ctx.trace_id,
@@ -793,6 +797,7 @@ class Agent(ABC):
                     duration_ms=(time.monotonic() - started_at) * 1000,
                     success=False,
                     result_chars=len(str(ex.message or ex)),
+                    attempts=attempts,
                 ))
                 if is_audit_enabled():
                     append_audit_record(
@@ -817,6 +822,7 @@ class Agent(ABC):
                     duration_ms=(time.monotonic() - started_at) * 1000,
                     error_type=type(ex).__name__,
                     error_message=str(ex),
+                    attempts=getattr(ex, 'attempts', attempts),
                 ))
                 raise
             emit(AgentEvent.tool_end(
@@ -830,6 +836,7 @@ class Agent(ABC):
                 duration_ms=(time.monotonic() - started_at) * 1000,
                 success=True,
                 result_chars=result_char_count(tool_result, ctx),
+                attempts=attempts,
             ))
             if is_audit_enabled():
                 append_audit_record(
@@ -843,35 +850,121 @@ class Agent(ABC):
                 )
             return tool_result
 
-    def _execute_tool(
+    def _normalize_tool_result(
         self,
-        tool_name: str,
-        tool_args: Union[str, dict],
-        **kwargs,
+        tool_result: Union[str, list, dict, List[ContentItem]],
     ) -> Union[str, List[ContentItem]]:
-        if tool_name not in self.function_map:
-            raise ToolNotFoundError(tool_name)
-        tool = self.function_map[tool_name]
-        try:
-            tool_result = tool.call(tool_args, **kwargs)
-        except (ToolServiceError, DocParserError) as ex:
-            raise ex
-        except Exception as ex:
-            exception_type = type(ex).__name__
-            exception_message = str(ex)
-            traceback_info = ''.join(traceback.format_tb(ex.__traceback__))
-            error_message = f'An error occurred when calling tool `{tool_name}`:\n' \
-                            f'{exception_type}: {exception_message}\n' \
-                            f'Traceback:\n{traceback_info}'
-            logger.warning(error_message)
-            raise ToolExecutionError(tool_name, error_message) from ex
-
         if isinstance(tool_result, str):
             return tool_result
         elif isinstance(tool_result, list) and all(isinstance(item, ContentItem) for item in tool_result):
             return tool_result  # multimodal tool results
         else:
             return json.dumps(tool_result, ensure_ascii=False, indent=4)
+
+    def _emit_tool_retry(
+        self,
+        *,
+        tool_name: str,
+        attempt: int,
+        max_attempts: int,
+        exc: BaseException,
+        delay_seconds: float,
+        span_id: Optional[str],
+    ) -> None:
+        ctx = get_run_context()
+        if ctx is None or not ctx.handlers:
+            return
+        emit(AgentEvent.tool_retry(
+            trace_id=ctx.trace_id,
+            run_id=ctx.run_id,
+            span_id=span_id or ctx.span_id,
+            parent_span_id=ctx.parent_span_id,
+            agent_name=ctx.agent_name,
+            agent_class=ctx.agent_class,
+            tool_name=tool_name,
+            attempt=attempt,
+            max_attempts=max_attempts,
+            error_type=type(exc).__name__,
+            error_message=str(getattr(exc, 'message', None) or exc),
+            delay_seconds=delay_seconds,
+        ))
+
+    def _execute_tool(
+        self,
+        tool_name: str,
+        tool_args: Union[str, dict],
+        **kwargs,
+    ) -> Tuple[Union[str, List[ContentItem]], int]:
+        obs_span_id = kwargs.pop('_obs_span_id', None)
+        if tool_name not in self.function_map:
+            raise ToolNotFoundError(tool_name)
+        tool = self.function_map[tool_name]
+        from cat_agent.tools.retry import retry_config_for_tool
+        from cat_agent.utils.backoff import compute_backoff_delay
+
+        retry_cfg = retry_config_for_tool(tool)
+        max_attempts = retry_cfg.max_attempts if retry_cfg else 1
+        delay = retry_cfg.initial_delay if retry_cfg else 1.0
+        last_exc: Optional[BaseException] = None
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                tool_result = tool.call(tool_args, **kwargs)
+            except (ToolServiceError, DocParserError) as ex:
+                last_exc = ex
+                if retry_cfg and attempt < max_attempts and retry_cfg.is_retryable(ex):
+                    self._emit_tool_retry(
+                        tool_name=tool_name,
+                        attempt=attempt,
+                        max_attempts=max_attempts,
+                        exc=ex,
+                        delay_seconds=delay,
+                        span_id=obs_span_id,
+                    )
+                    time.sleep(delay)
+                    delay = compute_backoff_delay(
+                        delay,
+                        exponential_base=retry_cfg.exponential_base,
+                        max_delay=retry_cfg.max_delay,
+                    )
+                    continue
+                if isinstance(ex, ToolExecutionError):
+                    ex.attempts = attempt  # type: ignore[attr-defined]
+                raise
+            except Exception as ex:
+                exception_type = type(ex).__name__
+                exception_message = str(ex)
+                traceback_info = ''.join(traceback.format_tb(ex.__traceback__))
+                error_message = f'An error occurred when calling tool `{tool_name}`:\n' \
+                                f'{exception_type}: {exception_message}\n' \
+                                f'Traceback:\n{traceback_info}'
+                logger.warning(error_message)
+                wrapped = ToolExecutionError(tool_name, error_message)
+                wrapped.__cause__ = ex
+                last_exc = wrapped
+                if retry_cfg and attempt < max_attempts and retry_cfg.is_retryable(wrapped):
+                    self._emit_tool_retry(
+                        tool_name=tool_name,
+                        attempt=attempt,
+                        max_attempts=max_attempts,
+                        exc=wrapped,
+                        delay_seconds=delay,
+                        span_id=obs_span_id,
+                    )
+                    time.sleep(delay)
+                    delay = compute_backoff_delay(
+                        delay,
+                        exponential_base=retry_cfg.exponential_base,
+                        max_delay=retry_cfg.max_delay,
+                    )
+                    continue
+                wrapped.attempts = attempt  # type: ignore[attr-defined]
+                raise wrapped from ex
+
+            return self._normalize_tool_result(tool_result), attempt
+
+        assert last_exc is not None
+        raise last_exc
 
     async def _acall_tool(
         self,
@@ -896,7 +989,7 @@ class Agent(ABC):
 
         if ctx is None or not ctx.handlers:
             try:
-                tool_result = await self._aexecute_tool(tool_name, tool_args, **kwargs)
+                tool_result, _attempts = await self._aexecute_tool(tool_name, tool_args, **kwargs)
             except (ToolNotFoundError, ToolExecutionError) as ex:
                 if is_audit_enabled():
                     append_audit_record(
@@ -933,9 +1026,12 @@ class Agent(ABC):
                 tool_args=format_tool_args(tool_args, ctx),
             ))
             started_at = time.monotonic()
+            attempts = 1
             try:
-                tool_result = await self._aexecute_tool(tool_name, tool_args, **kwargs)
+                tool_result, attempts = await self._aexecute_tool(
+                    tool_name, tool_args, _obs_span_id=span_id, **kwargs)
             except (ToolNotFoundError, ToolExecutionError) as ex:
+                attempts = getattr(ex, 'attempts', attempts)
                 emit(AgentEvent.tool_error(
                     trace_id=ctx.trace_id,
                     run_id=ctx.run_id,
@@ -947,6 +1043,7 @@ class Agent(ABC):
                     duration_ms=(time.monotonic() - started_at) * 1000,
                     error_type=type(ex).__name__,
                     error_message=str(ex.message or ex),
+                    attempts=attempts,
                 ))
                 emit(AgentEvent.tool_end(
                     trace_id=ctx.trace_id,
@@ -959,6 +1056,7 @@ class Agent(ABC):
                     duration_ms=(time.monotonic() - started_at) * 1000,
                     success=False,
                     result_chars=len(str(ex.message or ex)),
+                    attempts=attempts,
                 ))
                 if is_audit_enabled():
                     append_audit_record(
@@ -983,6 +1081,7 @@ class Agent(ABC):
                     duration_ms=(time.monotonic() - started_at) * 1000,
                     error_type=type(ex).__name__,
                     error_message=str(ex),
+                    attempts=getattr(ex, 'attempts', attempts),
                 ))
                 raise
             emit(AgentEvent.tool_end(
@@ -996,6 +1095,7 @@ class Agent(ABC):
                 duration_ms=(time.monotonic() - started_at) * 1000,
                 success=True,
                 result_chars=result_char_count(tool_result, ctx),
+                attempts=attempts,
             ))
             if is_audit_enabled():
                 append_audit_record(
@@ -1014,30 +1114,79 @@ class Agent(ABC):
         tool_name: str,
         tool_args: Union[str, dict],
         **kwargs,
-    ) -> Union[str, List[ContentItem]]:
+    ) -> Tuple[Union[str, List[ContentItem]], int]:
+        obs_span_id = kwargs.pop('_obs_span_id', None)
         if tool_name not in self.function_map:
             raise ToolNotFoundError(tool_name)
         tool = self.function_map[tool_name]
-        try:
-            tool_result = await tool.acall(tool_args, **kwargs)
-        except (ToolServiceError, DocParserError) as ex:
-            raise ex
-        except Exception as ex:
-            exception_type = type(ex).__name__
-            exception_message = str(ex)
-            traceback_info = ''.join(traceback.format_tb(ex.__traceback__))
-            error_message = f'An error occurred when calling tool `{tool_name}`:\n' \
-                            f'{exception_type}: {exception_message}\n' \
-                            f'Traceback:\n{traceback_info}'
-            logger.warning(error_message)
-            raise ToolExecutionError(tool_name, error_message) from ex
+        from cat_agent.tools.retry import retry_config_for_tool
+        from cat_agent.utils.backoff import compute_backoff_delay
 
-        if isinstance(tool_result, str):
-            return tool_result
-        elif isinstance(tool_result, list) and all(isinstance(item, ContentItem) for item in tool_result):
-            return tool_result
-        else:
-            return json.dumps(tool_result, ensure_ascii=False, indent=4)
+        retry_cfg = retry_config_for_tool(tool)
+        max_attempts = retry_cfg.max_attempts if retry_cfg else 1
+        delay = retry_cfg.initial_delay if retry_cfg else 1.0
+        last_exc: Optional[BaseException] = None
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                tool_result = await tool.acall(tool_args, **kwargs)
+            except asyncio.CancelledError:
+                raise
+            except (ToolServiceError, DocParserError) as ex:
+                last_exc = ex
+                if retry_cfg and attempt < max_attempts and retry_cfg.is_retryable(ex):
+                    self._emit_tool_retry(
+                        tool_name=tool_name,
+                        attempt=attempt,
+                        max_attempts=max_attempts,
+                        exc=ex,
+                        delay_seconds=delay,
+                        span_id=obs_span_id,
+                    )
+                    await asyncio.sleep(delay)
+                    delay = compute_backoff_delay(
+                        delay,
+                        exponential_base=retry_cfg.exponential_base,
+                        max_delay=retry_cfg.max_delay,
+                    )
+                    continue
+                if isinstance(ex, ToolExecutionError):
+                    ex.attempts = attempt  # type: ignore[attr-defined]
+                raise
+            except Exception as ex:
+                exception_type = type(ex).__name__
+                exception_message = str(ex)
+                traceback_info = ''.join(traceback.format_tb(ex.__traceback__))
+                error_message = f'An error occurred when calling tool `{tool_name}`:\n' \
+                                f'{exception_type}: {exception_message}\n' \
+                                f'Traceback:\n{traceback_info}'
+                logger.warning(error_message)
+                wrapped = ToolExecutionError(tool_name, error_message)
+                wrapped.__cause__ = ex
+                last_exc = wrapped
+                if retry_cfg and attempt < max_attempts and retry_cfg.is_retryable(wrapped):
+                    self._emit_tool_retry(
+                        tool_name=tool_name,
+                        attempt=attempt,
+                        max_attempts=max_attempts,
+                        exc=wrapped,
+                        delay_seconds=delay,
+                        span_id=obs_span_id,
+                    )
+                    await asyncio.sleep(delay)
+                    delay = compute_backoff_delay(
+                        delay,
+                        exponential_base=retry_cfg.exponential_base,
+                        max_delay=retry_cfg.max_delay,
+                    )
+                    continue
+                wrapped.attempts = attempt  # type: ignore[attr-defined]
+                raise wrapped from ex
+
+            return self._normalize_tool_result(tool_result), attempt
+
+        assert last_exc is not None
+        raise last_exc
 
     def _init_tool(self, tool: Union[str, Dict, BaseTool]):
         if isinstance(tool, BaseTool):
