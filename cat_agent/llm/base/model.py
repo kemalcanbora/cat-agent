@@ -8,6 +8,8 @@ from abc import ABC, abstractmethod
 from pprint import pformat
 from typing import Dict, Iterator, List, Literal, Optional, Union
 
+import asyncio
+
 from cat_agent.llm.schema import ASSISTANT, DEFAULT_SYSTEM_MESSAGE, FUNCTION, SYSTEM, USER, Message
 from cat_agent.log import logger
 from cat_agent.settings import DEFAULT_MAX_INPUT_TOKENS
@@ -113,6 +115,39 @@ class BaseChatModel(ABC):
         assert not responses[0].function_call
         assert isinstance(responses[0].content, str)
         return responses[0].content
+
+    async def achat(
+        self,
+        messages: List[Union[Message, Dict]],
+        functions: Optional[List[Dict]] = None,
+        extra_generate_cfg: Optional[Dict] = None,
+        **kwargs,
+    ) -> List[Message]:
+        """Async LLM chat. Does not stream tokens; collects and returns the full message list.
+
+        Default implementation runs sync :meth:`chat` in a worker thread. Backends with
+        native async HTTP (e.g. ``oai``) should override this for real concurrency.
+        """
+        del kwargs  # reserved for API compatibility
+
+        def _collect() -> List[Message]:
+            final: List[Message] = []
+            for output in self.chat(
+                messages=messages,
+                functions=functions,
+                stream=True,
+                delta_stream=False,
+                extra_generate_cfg=extra_generate_cfg,
+            ):
+                if output:
+                    final = output
+            return final
+
+        return await asyncio.to_thread(_collect)
+
+    async def aclose(self) -> None:
+        """Release async resources. Default is a no-op."""
+        return None
 
     def chat(
         self,

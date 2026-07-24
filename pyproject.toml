@@ -14,6 +14,7 @@ keywords = ["LLM", "Agent", "Function Calling", "RAG", "Code Interpreter"]
 requires-python = ">=3.10"
 dependencies = [
     "eval_type_backport",
+    "docstring_parser>=0.16",
     "json5",
     "jsonlines",
     "jsonschema",
@@ -92,6 +93,7 @@ pii = [
 test = [
     "pytest",
     "pytest-cov",
+    "pytest-asyncio",
     "rank_bm25",
 ]
 all = [
@@ -107,6 +109,8 @@ Homepage = "https://github.com/kemalcanbora/cat-agent"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.setuptools]
 include-package-data = true

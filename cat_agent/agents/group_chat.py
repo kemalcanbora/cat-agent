@@ -1,9 +1,9 @@
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
-# 
+#
 #    http://www.apache.org/licenses/LICENSE-2.0
-# 
+#
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -21,6 +21,9 @@ from cat_agent.agents.user_agent import PENDING_USER_INPUT, UserAgent
 from cat_agent.llm import BaseChatModel
 from cat_agent.llm.schema import Message
 from cat_agent.log import logger
+from cat_agent.multi_agent.blackboard import Blackboard
+from cat_agent.multi_agent.events import EventCallback
+from cat_agent.multi_agent.message import AgentMessage, parse_mentions, render_for_agent
 from cat_agent.tools import BaseTool
 
 
@@ -37,6 +40,9 @@ class GroupChat(Agent, MultiAgentHub):
                  agent_selection_method: Optional[str] = 'auto',
                  function_list: Optional[List[Union[str, Dict, BaseTool]]] = None,
                  llm: Optional[Union[Dict, BaseChatModel]] = None,
+                 on_event: Optional[EventCallback] = None,
+                 blackboard: Optional[Blackboard] = None,
+                 inject_hub_tools: bool = True,
                  **kwargs):
         """Initialization the agent.
 
@@ -62,15 +68,29 @@ class GroupChat(Agent, MultiAgentHub):
               (3) random: Random speech.
             function_list: The tools for inputting to the host.
             llm: The LLM for inputting to the host.
+            on_event: Optional callback for hub observability events.
+            blackboard: Optional shared scratch store.
+            inject_hub_tools: Inject ask_agent / handoff / blackboard tools into members.
         """
+        hub_keys = (
+            'max_ask_depth', 'max_ask_calls', 'allow_list',
+            'inject_ask_agent', 'inject_handoff', 'inject_blackboard_tools',
+            'auto_artifact_chars',
+        )
+        hub_kwargs = {k: kwargs.pop(k) for k in list(kwargs) if k in hub_keys}
         super().__init__(**kwargs)
         assert agent_selection_method in self._VALID_AGENT_SELECTION_METHODS, f'You must choose agent_selection_method from {", ".join(self._VALID_AGENT_SELECTION_METHODS)}'
         self.agent_selection_method = agent_selection_method
+
+        self._init_hub(on_event=on_event, blackboard=blackboard, **hub_kwargs)
 
         if isinstance(agents, dict):
             self._agents = self._init_agents_from_config(agents, llm=llm)
         else:
             self._agents = agents
+
+        if inject_hub_tools:
+            self._inject_hub_tools(self._agents)
 
         if self.agent_selection_method == 'auto':
             assert llm is not None, 'Need to provide LLM to the host in auto mode'
@@ -93,6 +113,8 @@ class GroupChat(Agent, MultiAgentHub):
             if not message.name:
                 message.name = message.role
 
+        self._ask_calls = 0
+
         if need_batch_response:
             return self._gen_batch_response(messages=messages,
                                             lang=lang,
@@ -112,24 +134,25 @@ class GroupChat(Agent, MultiAgentHub):
                             mentioned_agents_name: List[str] = None,
                             **kwargs) -> Iterator[List[Message]]:
         # Record all mentioned agents: reply in order
-        mentioned_agents_name = mentioned_agents_name or []
+        mentioned_agents_name = list(mentioned_agents_name or [])
         messages = copy.deepcopy(messages)
+        hub_messages: List[AgentMessage] = [
+            AgentMessage.from_message(m, known_names=self.agent_names) for m in messages
+        ]
 
         response = []
+        arrived_via_handoff = False
         for i in range(max_round):
-            if isinstance(messages[-1].content, list):
-                content = '\n'.join([x.text if x.text else '' for x in messages[-1].content]).strip()
-            else:
-                content = messages[-1].content.strip()
-            if '@' in content:
-                for x in content.split('@'):
-                    for agent in self.agents:
-                        if x.startswith(agent.name):
-                            if agent not in mentioned_agents_name:
-                                mentioned_agents_name.append(agent.name)
-                            break
+            self._hub_turn = i
+            if hub_messages:
+                last = hub_messages[-1]
+                for name in parse_mentions(last.content, self.agent_names):
+                    if name not in mentioned_agents_name:
+                        mentioned_agents_name.append(name)
+
             rsp = []
             for rsp in self._gen_one_response(messages=messages,
+                                              hub_messages=hub_messages,
                                               lang=lang,
                                               mentioned_agents_name=mentioned_agents_name,
                                               **kwargs):
@@ -145,21 +168,80 @@ class GroupChat(Agent, MultiAgentHub):
             if rsp[-1].content == PENDING_USER_INPUT:
                 # Terminate group chat and wait for user input
                 break
+
+            # Lift new wire messages into hub envelope (with mention → recipients)
+            for m in rsp:
+                hub_messages.append(AgentMessage.from_message(m, known_names=self.agent_names))
             messages.extend(rsp)
+
+            # After the speaker finishes, apply any handoff for the next round.
+            # If this speaker was itself the handoff owner and did not hand off
+            # further, their output is final — do not resume the previous agent.
+            handoff = self.consume_pending_handoff()
+            if handoff is not None:
+                if handoff.to in self.agent_names:
+                    mentioned_agents_name = [handoff.to] + [
+                        n for n in mentioned_agents_name if n != handoff.to
+                    ]
+                    if handoff.context:
+                        briefing = AgentMessage(
+                            sender=rsp[-1].name or 'system',
+                            recipients=[handoff.to],
+                            kind='handoff',
+                            content=handoff.context,
+                        )
+                        hub_messages.append(briefing)
+                    arrived_via_handoff = True
+                else:
+                    logger.warning(f'Handoff target "{handoff.to}" unknown — ignoring')
+                    if arrived_via_handoff:
+                        break
+            elif arrived_via_handoff:
+                break
         yield response
 
     def _gen_one_response(self,
                           messages: List[Message] = None,
                           lang: str = 'zh',
                           mentioned_agents_name: List[str] = None,
+                          hub_messages: List[AgentMessage] = None,
                           **kwargs) -> Iterator[List[Message]]:
 
         selected_agent = self._select_agent(messages, mentioned_agents_name, lang)
         if selected_agent:
             logger.info(f'selected_agent_name: {selected_agent.name}')
-            new_messages = self._manage_messages(messages, selected_agent.name)
+            self.emit_event('agent_start', selected_agent.name)
+
+            if hub_messages is not None:
+                # Visibility-scoped context from AgentMessage envelopes
+                visible = render_for_agent(hub_messages, selected_agent.name)
+                # Preserve the trailing "{name}: " prompt used by the old path
+                if visible and visible[-1].role == 'user':
+                    visible[-1].content = (visible[-1].content or '') + f'\n{selected_agent.name}: '
+                else:
+                    from cat_agent.llm.schema import USER
+                    visible.append(Message(USER, f'{selected_agent.name}: '))
+                new_messages = visible
+            else:
+                new_messages = self._manage_messages(messages, selected_agent.name)
+
+            # Inject blackboard listing into system awareness via a preamble user note
+            bb_desc = self.blackboard.describe()
+            if bb_desc and bb_desc != '(blackboard empty)':
+                from cat_agent.llm.schema import USER
+                new_messages = [
+                    Message(USER, f'[Blackboard]\n{bb_desc}'),
+                    *new_messages,
+                ]
+
             for rsp in selected_agent.run(messages=new_messages, **kwargs):
+                # Auto-offload oversized assistant outputs
+                for msg in rsp:
+                    if msg.role == 'assistant' and isinstance(msg.content, str):
+                        msg.content = self.maybe_offload_to_blackboard(
+                            msg.content, author=selected_agent.name)
                 yield rsp
+            self.emit_event('agent_end', selected_agent.name)
         else:
             yield []
 
@@ -210,6 +292,7 @@ class GroupChat(Agent, MultiAgentHub):
         return self.agents[(last_agent_index + 1) % len(self.agents)]
 
     def _manage_messages(self, messages: List[Message], name: str) -> List[Message]:
+        """Legacy path: string-rewrite history for one agent (kept for compatibility)."""
         new_messages = []
         new_msg = None
         i = 0

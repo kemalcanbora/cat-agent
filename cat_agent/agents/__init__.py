@@ -1,5 +1,11 @@
 from cat_agent.agent import Agent, BasicAgent
 from cat_agent.multi_agent_hub import MultiAgentHub
+from cat_agent.multi_agent import (
+    AgentMessage,
+    Blackboard,
+    Handoff,
+    HubEvent,
+)
 
 from .assistant import Assistant
 # DocQAAgent is the default solution for long document question answering.
@@ -16,7 +22,11 @@ from .virtual_memory_agent import VirtualMemoryAgent
 
 __all__ = [
     'Agent',
+    'AgentMessage',
     'BasicAgent',
+    'Blackboard',
+    'Handoff',
+    'HubEvent',
     'MultiAgentHub',
     'DocQAAgent',
     'ParallelDocQA',

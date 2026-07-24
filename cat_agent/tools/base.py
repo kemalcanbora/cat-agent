@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 from abc import ABC, abstractmethod
@@ -189,6 +190,15 @@ class BaseTool(ABC):
             The result returned by the tool, implemented in the subclass.
         """
         raise NotImplementedError
+
+    async def acall(self, params: Union[str, dict], **kwargs) -> Union[str, list, dict, List[ContentItem]]:
+        """Async interface for calling tools.
+
+        Default implementation runs sync :meth:`call` in a worker thread so the
+        event loop is not blocked. Subclasses with native coroutines (or the
+        ``@tool`` decorator for ``async def`` functions) should override this.
+        """
+        return await asyncio.to_thread(self.call, params, **kwargs)
 
     def _verify_json_format_args(self, params: Union[str, dict], strict_json: bool = False) -> dict:
         """Verify the parameters of the function call"""

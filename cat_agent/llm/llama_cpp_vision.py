@@ -24,7 +24,7 @@ def _resolve_mmproj_path(cfg: dict) -> Optional[str]:
 
     Supports:
       - ``mmproj_path``  → local file
-      - ``mmproj_repo_id`` + ``mmproj_filename`` → download from HuggingFace
+      - ``mmproj_repo_id`` + ``mmproj_filename`` → HF cache, then download
       - ``mmproj_filename`` alone → uses the main ``repo_id``
     """
     mmproj_path = cfg.get('mmproj_path')
@@ -42,9 +42,13 @@ def _resolve_mmproj_path(cfg: dict) -> Optional[str]:
             "'mmproj_repo_id' (or 'repo_id') so the file can be downloaded."
         )
 
-    from huggingface_hub import hf_hub_download
-    logger.info(f"Downloading mmproj from HuggingFace: {mmproj_repo_id} / {mmproj_filename}")
-    return hf_hub_download(repo_id=mmproj_repo_id, filename=mmproj_filename)
+    from cat_agent.llm.gguf import resolve_gguf_path
+
+    return resolve_gguf_path(
+        repo_id=mmproj_repo_id,
+        filename=mmproj_filename,
+        cache_dir=cfg.get('cache_dir'),
+    )
 
 
 def _build_chat_handler(cfg: dict, mmproj_path: Optional[str]):
@@ -139,18 +143,16 @@ class LlamaCppVision(BaseFnCallModel):
         if chat_handler is not None:
             llama_kwargs['chat_handler'] = chat_handler
 
-        # ── Load model ──
-        if model_path:
-            logger.info(f"Loading llama.cpp vision model from: {model_path}")
-            self.llm = Llama(model_path=model_path, **llama_kwargs)
-        else:
-            logger.info(f"Downloading/loading vision model: {repo_id} / {filename}")
-            self.llm = Llama.from_pretrained(
-                repo_id=repo_id,
-                filename=filename,
-                cache_dir=cfg.get('cache_dir'),
-                **llama_kwargs,
-            )
+        from cat_agent.llm.gguf import resolve_gguf_path
+
+        resolved = resolve_gguf_path(
+            model_path=model_path,
+            repo_id=repo_id,
+            filename=filename,
+            cache_dir=cfg.get('cache_dir'),
+        )
+        logger.info(f"Loading llama.cpp vision model from: {resolved}")
+        self.llm = Llama(model_path=resolved, **llama_kwargs)
 
         self._supports_function_calling = True
 

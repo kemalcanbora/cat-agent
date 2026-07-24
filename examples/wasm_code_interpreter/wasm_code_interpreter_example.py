@@ -17,6 +17,7 @@ import time
 def main():
     # -----------------------------------------------------------------
     # LLM config — adjust to your setup (llama_cpp, openai, etc.)
+    # repo_id/filename uses HF hub cache (or ~/models/<filename>) first.
     # -----------------------------------------------------------------
     llm_cfg = {
         'model_type': 'llama_cpp',

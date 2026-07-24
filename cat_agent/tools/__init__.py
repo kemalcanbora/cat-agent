@@ -12,6 +12,7 @@
 
 from .base import TOOL_REGISTRY, BaseTool, enable_optional_tools
 from .code_interpreter import CodeInterpreter
+from .decorator import ToolArgumentError, tool
 from .doc_parser import DocParser
 from .extract_doc_vocabulary import ExtractDocVocabulary
 from .python_executor import PythonExecutor
@@ -45,4 +46,6 @@ __all__ = [
     'MCPManager',
     'WasmCodeInterpreter',
     'WebSearch',
+    'tool',
+    'ToolArgumentError',
 ]

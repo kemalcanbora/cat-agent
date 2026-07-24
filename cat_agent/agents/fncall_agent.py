@@ -10,14 +10,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, Iterator, List, Literal, Optional, Union
+import asyncio
+from typing import AsyncIterator, Dict, Iterator, List, Literal, Optional, Union
 
 from cat_agent import Agent
+from cat_agent.agent import _chain_hard_tool_errors
 from cat_agent.llm import BaseChatModel
 from cat_agent.llm.schema import DEFAULT_SYSTEM_MESSAGE, FUNCTION, Message
 from cat_agent.memory import Memory
 from cat_agent.settings import MAX_LLM_CALL_PER_RUN
 from cat_agent.tools import BaseTool
+from cat_agent.tools.base import ToolServiceError
+from cat_agent.tools.simple_doc_parser import DocParserError
 from cat_agent.utils.utils import extract_files_from_messages
 
 
@@ -111,6 +115,80 @@ class FnCallAgent(Agent):
                     break
         yield response
 
+    async def _arun(self, messages: List[Message], lang: Literal['en', 'zh'] = 'en', **kwargs) -> AsyncIterator[List[Message]]:
+        """Async FnCall loop with concurrent tool execution for a single model turn.
+
+        The async path does not stream tokens; each yield is a complete message list.
+        Multiple tool calls in one turn are run via ``asyncio.gather``.
+        """
+        num_llm_calls_available = MAX_LLM_CALL_PER_RUN
+        response: List[Message] = []
+        while True and num_llm_calls_available > 0:
+            num_llm_calls_available -= 1
+
+            extra_generate_cfg = {'lang': lang}
+            if kwargs.get('seed') is not None:
+                extra_generate_cfg['seed'] = kwargs['seed']
+            output = await self._acall_llm(
+                messages=messages,
+                functions=self.function_schemas,
+                extra_generate_cfg=extra_generate_cfg,
+            )
+            if output:
+                response.extend(output)
+                messages.extend(output)
+                yield list(response)
+
+                tool_jobs = []
+                for out in output:
+                    use_tool, tool_name, tool_args, _ = self._detect_tool(out)
+                    if use_tool:
+                        tool_jobs.append((out, tool_name, tool_args))
+
+                if not tool_jobs:
+                    break
+
+                tasks = [
+                    asyncio.create_task(
+                        self._acall_tool(tool_name, tool_args, messages=messages, **kwargs)
+                    )
+                    for _, tool_name, tool_args in tool_jobs
+                ]
+                try:
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                except asyncio.CancelledError:
+                    for task in tasks:
+                        task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                    raise
+
+                hard_errors: List[BaseException] = []
+                for (out, tool_name, _), result in zip(tool_jobs, results):
+                    if isinstance(result, (ToolServiceError, DocParserError)):
+                        hard_errors.append(result)
+                        continue
+                    if isinstance(result, BaseException):
+                        exception_type = type(result).__name__
+                        exception_message = str(result)
+                        error_message = (
+                            f'An error occurred when calling tool `{tool_name}`:\n'
+                            f'{exception_type}: {exception_message}'
+                        )
+                        result = error_message
+                    fn_msg = Message(
+                        role=FUNCTION,
+                        name=tool_name,
+                        content=result,
+                        extra={'function_id': out.extra.get('function_id', '1') if out.extra else '1'},
+                    )
+                    messages.append(fn_msg)
+                    response.append(fn_msg)
+                    yield list(response)
+
+                if hard_errors:
+                    raise _chain_hard_tool_errors(hard_errors)
+        yield response
+
     def _call_tool(self, tool_name: str, tool_args: Union[str, dict] = '{}', **kwargs) -> str:
         # Temporary plan: Check if it is necessary to transfer files to the tool
         # Todo: This should be changed to parameter passing, and the file URL should be determined by the model
@@ -120,3 +198,10 @@ class FnCallAgent(Agent):
             return super()._call_tool(tool_name, tool_args, files=files, **kwargs)
         else:
             return super()._call_tool(tool_name, tool_args, **kwargs)
+
+    async def _acall_tool(self, tool_name: str, tool_args: Union[str, dict] = '{}', **kwargs):
+        if self.function_map[tool_name].file_access:
+            assert 'messages' in kwargs
+            files = extract_files_from_messages(kwargs['messages'], include_images=True) + self.mem.system_files
+            return await super()._acall_tool(tool_name, tool_args, files=files, **kwargs)
+        return await super()._acall_tool(tool_name, tool_args, **kwargs)

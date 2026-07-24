@@ -1,35 +1,25 @@
 import sys
 from pathlib import Path
+from typing import List
 
 # Ensure we import the local repo checkout (not an older site-packages install).
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 from cat_agent.agents import Assistant
-from cat_agent.tools.base import BaseTool, register_tool
+from cat_agent.tools import tool
 from cat_agent.utils.output_beautify import typewriter_print
 
 
-@register_tool("sum_numbers")
-class SumNumbers(BaseTool):
-    description = "Sum a list of numbers"
-    parameters = {
-        "type": "object",
-        "properties": {
-            "numbers": {
-                "description": "The list of numbers to sum.",
-                "type": "array",
-                "items": {"type": "number"},
-            }
-        },
-        "required": ["numbers"],
-    }
+@tool
+def sum_numbers(numbers: List[float]) -> str:
+    """Sum a list of numbers.
 
-    def call(self, params: str, **kwargs) -> str:
-        params = self._verify_json_format_args(params)
-        numbers = params["numbers"]
-        result = sum(numbers)
-        return f"The sum of {numbers} is {result}."
+    Args:
+        numbers: The list of numbers to sum.
+    """
+    result = sum(numbers)
+    return f'The sum of {numbers} is {result}.'
 
 
 def main():
@@ -64,4 +54,3 @@ Sum the following numbers: 1, 2, 3, 4, and 5. Just give me the final answer with
 
 if __name__ == "__main__":
     main()
-

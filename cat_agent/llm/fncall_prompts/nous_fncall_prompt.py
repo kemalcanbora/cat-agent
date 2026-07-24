@@ -231,11 +231,17 @@ class NousFnCallPrompt(BaseFnCallPrompt):
                                     content=[],
                                     function_call=FunctionCall(
                                         name=fn_name,
-                                        arguments=fn_args,
+                                        arguments=fn_args or '{}',
                                     ),
                                     extra=_extra,
                                 ))
-                    if fn and 'name' in fn and 'arguments' in fn:
+                    if fn and 'name' in fn:
+                        # Models often omit empty arguments: {"name": "foo"}
+                        args = fn.get('arguments', {})
+                        if args is None:
+                            args = {}
+                        if not isinstance(args, str):
+                            args = json.dumps(args, ensure_ascii=False)
                         _extra = copy.deepcopy(extra) if extra else {}
                         _extra['function_id'] = str(tool_id)
                         tool_id += 1
@@ -245,7 +251,7 @@ class NousFnCallPrompt(BaseFnCallPrompt):
                                 content=[],
                                 function_call=FunctionCall(
                                     name=fn['name'],
-                                    arguments=json.dumps(fn['arguments'], ensure_ascii=False),
+                                    arguments=args,
                                 ),
                                 extra=_extra,
                             ))

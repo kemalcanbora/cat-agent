@@ -1,5 +1,6 @@
 """Tests for cat_agent.llm.llama_cpp_vision."""
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -44,24 +45,36 @@ class TestResolveMmprojPath:
     def test_falls_back_to_repo_id(self):
         pytest.importorskip("llama_cpp")
         from cat_agent.llm.llama_cpp_vision import _resolve_mmproj_path
-        with patch("huggingface_hub.hf_hub_download", return_value="/cached/clip.gguf") as mock_dl:
+        with patch("cat_agent.llm.gguf._hf_cache_path", return_value=None), \
+             patch("huggingface_hub.hf_hub_download", return_value="/cached/clip.gguf") as mock_dl, \
+             patch("cat_agent.llm.gguf.Path.home", return_value=Path("/no/home")):
             result = _resolve_mmproj_path({
                 "repo_id": "org/model-GGUF",
                 "mmproj_filename": "clip.gguf",
             })
-        mock_dl.assert_called_once_with(repo_id="org/model-GGUF", filename="clip.gguf")
+        mock_dl.assert_called_once_with(
+            repo_id="org/model-GGUF",
+            filename="clip.gguf",
+            cache_dir=None,
+        )
         assert result == "/cached/clip.gguf"
 
     def test_uses_explicit_mmproj_repo_id(self):
         pytest.importorskip("llama_cpp")
         from cat_agent.llm.llama_cpp_vision import _resolve_mmproj_path
-        with patch("huggingface_hub.hf_hub_download", return_value="/cached/clip.gguf") as mock_dl:
+        with patch("cat_agent.llm.gguf._hf_cache_path", return_value=None), \
+             patch("huggingface_hub.hf_hub_download", return_value="/cached/clip.gguf") as mock_dl, \
+             patch("cat_agent.llm.gguf.Path.home", return_value=Path("/no/home")):
             _resolve_mmproj_path({
                 "repo_id": "org/model-GGUF",
                 "mmproj_repo_id": "org/other-repo",
                 "mmproj_filename": "clip.gguf",
             })
-        mock_dl.assert_called_once_with(repo_id="org/other-repo", filename="clip.gguf")
+        mock_dl.assert_called_once_with(
+            repo_id="org/other-repo",
+            filename="clip.gguf",
+            cache_dir=None,
+        )
 
 
 # ---------------------------------------------------------------------------

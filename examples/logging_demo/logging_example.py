@@ -22,36 +22,20 @@ import time
 
 from cat_agent.agents import Assistant
 from cat_agent.log import logger, setup_logger
-from cat_agent.tools.base import BaseTool, register_tool
+from cat_agent.tools import tool
 
-@register_tool("get_weather")
-class GetWeather(BaseTool):
-    description = (
-        "Get the current weather for a city. "
-        "Provide the 'city' name as a string."
-    )
-    parameters = {
-        "type": "object",
-        "properties": {
-            "city": {
-                "description": "Name of the city to get the weather for",
-                "type": "string",
-            },
-        },
-        "required": ["city"],
-    }
 
-    def call(self, params: str, **kwargs) -> str:
-        params = self._verify_json_format_args(params)
-        city = params.get("city", "unknown")
+@tool
+def get_weather(city: str) -> str:
+    """Get the current weather for a city. Provide the 'city' name as a string.
 
-        logger.info("Weather lookup requested for city: {}", city)
-
-        # Simulate a slow API call
-        time.sleep(0.3)
-        logger.debug("Weather API responded for {}", city)
-
-        return f"The weather in {city} is 22 C and sunny."
+    Args:
+        city: Name of the city to get the weather for
+    """
+    logger.info('Weather lookup requested for city: {}', city)
+    time.sleep(0.3)
+    logger.debug('Weather API responded for {}', city)
+    return f'The weather in {city} is 22 C and sunny.'
 
 
 def main() -> None:
@@ -60,6 +44,7 @@ def main() -> None:
     if not os.environ.get("CAT_AGENT_LOG_LEVEL"):
         setup_logger(level="DEBUG")
 
+    # repo_id/filename: HF hub cache (or ~/models/<filename>) before download.
     llm_cfg = {
         "model_type": "llama_cpp",
         "repo_id": "Salesforce/xLAM-2-3b-fc-r-gguf",

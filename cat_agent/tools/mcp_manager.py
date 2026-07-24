@@ -284,6 +284,25 @@ class MCPManager:
                     logger.info(f'Failed in executing MCP tool: {e}')
                     raise e
 
+            async def acall(self, params: Union[str, dict], **kwargs) -> str:
+                """Await MCP on its background loop without blocking the caller's loop."""
+                tool_args = json.loads(params) if isinstance(params, str) else params
+                manager = MCPManager()
+                client = manager.clients[self.client_id]
+                future = asyncio.run_coroutine_threadsafe(
+                    client.execute_function(tool_name, tool_args),
+                    manager.loop,
+                )
+                afut = asyncio.wrap_future(future)
+                try:
+                    return await afut
+                except asyncio.CancelledError:
+                    future.cancel()
+                    raise
+                except Exception as e:
+                    logger.info(f'Failed in executing MCP tool: {e}')
+                    raise e
+
         ToolClass.__name__ = f'{register_name}_Class'
         return ToolClass()
 

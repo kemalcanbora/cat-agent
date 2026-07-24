@@ -3,6 +3,7 @@ from typing import Dict, Iterator, List, Optional, Union
 
 from cat_agent.llm.base import register_llm
 from cat_agent.llm.function_calling import BaseFnCallModel
+from cat_agent.llm.gguf import resolve_gguf_path
 from cat_agent.llm.schema import ASSISTANT, Message
 from cat_agent.log import logger
 
@@ -25,7 +26,7 @@ class LlamaCpp(BaseFnCallModel):
     llm_cfg = {
         'model_type': 'llama_cpp',
         'model_path': '/path/to/qwen2.5-7b-instruct-q5_k_m.gguf',
-        # or (HuggingFace repo style)
+        # or (HuggingFace repo style — uses hub cache first, downloads only if missing)
         # 'repo_id': 'Qwen/Qwen2.5-7B-Instruct-GGUF',
         # 'filename': 'qwen2.5-7b-instruct-q5_k_m.gguf',
         'n_ctx': 8192,
@@ -52,6 +53,13 @@ class LlamaCpp(BaseFnCallModel):
                 "or both 'repo_id' and 'filename'"
             )
 
+        resolved = resolve_gguf_path(
+            model_path=model_path,
+            repo_id=repo_id,
+            filename=filename,
+            cache_dir=cfg.get('cache_dir'),
+        )
+
         llama_kwargs = {
             'n_ctx': cfg.get('n_ctx', 8192),
             'n_gpu_layers': cfg.get('n_gpu_layers', -1),
@@ -61,18 +69,8 @@ class LlamaCpp(BaseFnCallModel):
             'llama_mmap_supported': True,
         }
 
-        if model_path:
-            logger.info(f"Loading llama.cpp model from local path: {model_path}")
-            self.llm = Llama(model_path=model_path, **llama_kwargs)
-        else:
-            logger.info(f"Downloading/Loading from HuggingFace: {repo_id} / {filename}")
-            llama_kwargs['cache_dir'] = cfg.get('cache_dir')
-            self.llm = Llama.from_pretrained(
-                repo_id=repo_id,
-                filename=filename,
-                **llama_kwargs
-            )
-
+        logger.info(f"Loading llama.cpp model from: {resolved}")
+        self.llm = Llama(model_path=resolved, **llama_kwargs)
         self._supports_function_calling = True
 
     @property

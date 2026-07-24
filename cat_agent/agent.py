@@ -10,12 +10,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 import copy
 import json
 import time
 import traceback
+import warnings
 from abc import ABC, abstractmethod
-from typing import Dict, Iterator, List, Optional, Tuple, TYPE_CHECKING, Union
+from typing import AsyncIterator, Dict, Iterator, List, Optional, Tuple, TYPE_CHECKING, Union
 
 from cat_agent.llm import get_chat_model
 from cat_agent.llm.base import BaseChatModel
@@ -41,6 +43,17 @@ from cat_agent.utils.utils import has_chinese_messages, merge_generate_cfgs
 
 if TYPE_CHECKING:
     from cat_agent.observability.handlers.base import BaseHandler
+
+# One-time warning when sync run() is invoked under a running event loop.
+_RUN_IN_LOOP_WARNED = False
+
+
+def _chain_hard_tool_errors(errors: List[BaseException]) -> BaseException:
+    """Raise the earliest-in-order hard error; link the rest via ``__context__``."""
+    assert errors
+    for i in range(len(errors) - 1):
+        errors[i].__context__ = errors[i + 1]
+    return errors[0]
 
 
 class Agent(ABC):
@@ -87,6 +100,8 @@ class Agent(ABC):
         self.name = name
         self.description = description
         self._handlers = handlers or []
+        self._async_closed = False
+        self._async_inflight = 0
 
     def run_nonstream(self, messages: List[Union[Dict, Message]], **kwargs) -> Union[List[Message], List[Dict]]:
         """Same as self.run, but with stream=False,
@@ -108,6 +123,20 @@ class Agent(ABC):
         Yields:
             The response generator.
         """
+        global _RUN_IN_LOOP_WARNED
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            if not _RUN_IN_LOOP_WARNED:
+                warnings.warn(
+                    'run() called from a running event loop; this blocks it. Use arun().',
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                _RUN_IN_LOOP_WARNED = True
+
         messages = list(messages)
         _return_message_type = 'dict'
         new_messages = []
@@ -226,6 +255,198 @@ class Agent(ABC):
             else:
                 yield [x.model_dump() if not isinstance(x, dict) else x for x in rsp]
 
+    async def arun_nonstream(
+        self,
+        messages: List[Union[Dict, Message]],
+        **kwargs,
+    ) -> Union[List[Message], List[Dict]]:
+        """Same as :meth:`arun`, but returns only the final collected response.
+
+        The async path does not stream tokens; this method collects and returns
+        the last complete message list from :meth:`arun`.
+        """
+        last_responses: Union[List[Message], List[Dict]] = []
+        async for rsp in self.arun(messages, **kwargs):
+            last_responses = rsp
+        return last_responses
+
+    async def arun(
+        self,
+        messages: List[Union[Dict, Message]],
+        **kwargs,
+    ) -> AsyncIterator[Union[List[Message], List[Dict]]]:
+        """Async agent entry point.
+
+        The async path does not stream tokens; ``arun`` collects each model turn
+        fully and yields complete message lists (not token deltas). Prefer
+        :meth:`arun_nonstream` when you only need the final response.
+
+        Cancellation: cancelling the task that awaits ``arun`` cancels waiting on
+        in-flight tool gathers. Sync tools running via ``asyncio.to_thread`` cannot
+        be aborted mid-call — their worker threads run to completion. MCP tools
+        bridged with ``wrap_future`` cancel the cross-loop future when possible.
+
+        Concurrent :meth:`aclose` waits for in-flight ``arun`` calls to finish
+        before closing resources. Calling ``arun`` after ``aclose`` raises
+        ``RuntimeError``.
+        """
+        if self._async_closed:
+            raise RuntimeError('Agent has been closed via aclose(); cannot arun.')
+        self._async_inflight += 1
+        try:
+            new_messages, return_message_type, kwargs = self._normalize_run_inputs(messages, **kwargs)
+            handlers = resolve_handlers(self._handlers, kwargs.get('handlers'))
+            emit_stream_chunks = bool(kwargs.get('emit_stream_chunks'))
+            if handlers:
+                with run_context(
+                    agent_name=self.name,
+                    agent_class=type(self).__name__,
+                    handlers=handlers,
+                    trace_id=kwargs.get('trace_id'),
+                    emit_stream_chunks=emit_stream_chunks,
+                ) as ctx:
+                    async for rsp in self._arun_with_observability(
+                        new_messages=new_messages,
+                        return_message_type=return_message_type,
+                        lang=kwargs.get('lang', 'en'),
+                        run_kwargs=kwargs,
+                        ctx=ctx,
+                    ):
+                        yield rsp
+            else:
+                async for rsp in self._ayield_run_responses(
+                    self._arun(messages=new_messages, **kwargs),
+                    return_message_type,
+                ):
+                    yield rsp
+        finally:
+            self._async_inflight -= 1
+
+    def _normalize_run_inputs(
+        self,
+        messages: List[Union[Dict, Message]],
+        **kwargs,
+    ) -> Tuple[List[Message], str, dict]:
+        messages = list(messages)
+        _return_message_type = 'dict'
+        new_messages = []
+        if not messages:
+            _return_message_type = 'message'
+        for msg in messages:
+            if isinstance(msg, dict):
+                new_messages.append(Message(**msg))
+            else:
+                new_messages.append(msg)
+                _return_message_type = 'message'
+
+        if 'lang' not in kwargs:
+            if has_chinese_messages(new_messages):
+                kwargs['lang'] = 'zh'
+            else:
+                kwargs['lang'] = 'en'
+
+        if self.system_message:
+            if not new_messages or new_messages[0][ROLE] != SYSTEM:
+                new_messages.insert(0, Message(role=SYSTEM, content=self.system_message))
+            else:
+                sys_msg = copy.deepcopy(new_messages[0])
+                if isinstance(sys_msg[CONTENT], str):
+                    sys_msg[CONTENT] = self.system_message + '\n\n' + sys_msg[CONTENT]
+                else:
+                    assert isinstance(sys_msg[CONTENT], list)
+                    assert sys_msg[CONTENT][0].text
+                    sys_msg[CONTENT] = [ContentItem(text=self.system_message + '\n\n')] + sys_msg[CONTENT]
+                new_messages[0] = sys_msg
+        return new_messages, _return_message_type, kwargs
+
+    async def _arun_with_observability(
+        self,
+        *,
+        new_messages: List[Message],
+        return_message_type: str,
+        lang: str,
+        run_kwargs: dict,
+        ctx,
+    ) -> AsyncIterator[List[Union[Message, Dict]]]:
+        started_at = time.monotonic()
+        yield_count = 0
+        emit(AgentEvent.run_start(
+            trace_id=ctx.trace_id,
+            run_id=ctx.run_id,
+            span_id=ctx.span_id,
+            parent_span_id=ctx.parent_span_id,
+            agent_name=ctx.agent_name,
+            agent_class=ctx.agent_class,
+            message_count=len(new_messages),
+            lang=lang,
+        ))
+        try:
+            async for rsp in self._ayield_run_responses(
+                self._arun(messages=new_messages, **run_kwargs),
+                return_message_type,
+            ):
+                yield_count += 1
+                yield rsp
+            emit(AgentEvent.run_end(
+                trace_id=ctx.trace_id,
+                run_id=ctx.run_id,
+                span_id=ctx.span_id,
+                parent_span_id=ctx.parent_span_id,
+                agent_name=ctx.agent_name,
+                agent_class=ctx.agent_class,
+                duration_ms=(time.monotonic() - started_at) * 1000,
+                yield_count=yield_count,
+            ))
+        except Exception as ex:
+            emit(AgentEvent.run_error(
+                trace_id=ctx.trace_id,
+                run_id=ctx.run_id,
+                span_id=ctx.span_id,
+                parent_span_id=ctx.parent_span_id,
+                agent_name=ctx.agent_name,
+                agent_class=ctx.agent_class,
+                duration_ms=(time.monotonic() - started_at) * 1000,
+                error_type=type(ex).__name__,
+                error_message=str(ex),
+            ))
+            raise
+
+    async def _ayield_run_responses(
+        self,
+        response_iter: AsyncIterator[List[Message]],
+        return_message_type: str,
+    ) -> AsyncIterator[List[Union[Message, Dict]]]:
+        async for rsp in response_iter:
+            for i in range(len(rsp)):
+                if not rsp[i].name and self.name:
+                    rsp[i].name = self.name
+            if return_message_type == 'message':
+                yield [Message(**x) if isinstance(x, dict) else x for x in rsp]
+            else:
+                yield [x.model_dump() if not isinstance(x, dict) else x for x in rsp]
+
+    async def aclose(self) -> None:
+        """Close async resources (e.g. reused ``AsyncOpenAI`` client).
+
+        Waits for any in-flight :meth:`arun` calls to finish, then closes the LLM
+        async client if present. Concurrent ``aclose`` during ``arun`` is defined:
+        ``aclose`` waits; a later ``arun`` raises ``RuntimeError``.
+        """
+        while self._async_inflight > 0:
+            await asyncio.sleep(0.01)
+        self._async_closed = True
+        aclose_fn = getattr(self.llm, 'aclose', None)
+        if aclose_fn is not None:
+            result = aclose_fn()
+            if asyncio.iscoroutine(result) or asyncio.isfuture(result):
+                await result
+
+    async def __aenter__(self) -> 'Agent':
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        await self.aclose()
+
     @abstractmethod
     def _run(self, messages: List[Message], lang: str = 'en', **kwargs) -> Iterator[List[Message]]:
         """Return one response generator based on the received messages.
@@ -242,6 +463,19 @@ class Agent(ABC):
             The response generator.
         """
         raise NotImplementedError
+
+    async def _arun(self, messages: List[Message], lang: str = 'en', **kwargs) -> AsyncIterator[List[Message]]:
+        """Async workflow. Default collects the sync :meth:`_run` iterator off-thread.
+
+        Subclasses that need concurrent tool execution should override this.
+        The async path does not stream tokens; each yield is a complete message list.
+        """
+        def _collect() -> List[List[Message]]:
+            return list(self._run(messages=messages, lang=lang, **kwargs))
+
+        chunks = await asyncio.to_thread(_collect)
+        for chunk in chunks:
+            yield chunk
 
     def _audit_context(self) -> dict:
         ctx = get_run_context()
@@ -373,6 +607,102 @@ class Agent(ABC):
                     {'messages': messages_to_payload(final_output)},
                     **audit_meta,
                 )
+
+    async def _acall_llm(
+        self,
+        messages: List[Message],
+        functions: Optional[List[Dict]] = None,
+        extra_generate_cfg: Optional[dict] = None,
+    ) -> List[Message]:
+        """Async LLM call. Does not stream tokens; collects and returns the full message list."""
+        from cat_agent.security.audit import append_audit_record, is_audit_enabled
+        from cat_agent.security.pii import maybe_redact_messages_for_prompt
+
+        ctx = get_run_context()
+        messages_for_llm = maybe_redact_messages_for_prompt(messages)
+        audit_meta = self._audit_context()
+        extra_cfg = merge_generate_cfgs(
+            base_generate_cfg=self.extra_generate_cfg,
+            new_generate_cfg=extra_generate_cfg,
+        )
+
+        if is_audit_enabled():
+            append_audit_record(
+                'audit.prompt',
+                {'messages': messages_to_payload(messages_for_llm)},
+                **audit_meta,
+            )
+
+        async def _invoke() -> List[Message]:
+            achat = getattr(self.llm, 'achat', None)
+            if achat is not None:
+                result = await achat(
+                    messages=messages_for_llm,
+                    functions=functions,
+                    extra_generate_cfg=extra_cfg,
+                )
+                return list(result) if result else []
+
+            def _collect() -> List[Message]:
+                final: List[Message] = []
+                for output in self.llm.chat(
+                    messages=messages_for_llm,
+                    functions=functions,
+                    stream=True,
+                    extra_generate_cfg=extra_cfg,
+                ):
+                    if output:
+                        final = output
+                return final
+
+            return await asyncio.to_thread(_collect)
+
+        if ctx is None or not ctx.handlers:
+            final_output = await _invoke()
+            if is_audit_enabled() and final_output:
+                append_audit_record(
+                    'audit.model_output',
+                    {'messages': messages_to_payload(final_output)},
+                    **audit_meta,
+                )
+            return final_output
+
+        model = agent_model_name(self.llm)
+        tool_count = len(functions or [])
+        with child_span() as span_id:
+            emit(AgentEvent.llm_start(
+                trace_id=ctx.trace_id,
+                run_id=ctx.run_id,
+                span_id=span_id,
+                parent_span_id=ctx.parent_span_id,
+                agent_name=ctx.agent_name,
+                agent_class=ctx.agent_class,
+                model=model,
+                message_count=len(messages_for_llm),
+                tool_count=tool_count,
+            ))
+            started_at = time.monotonic()
+            final_output = await _invoke()
+            emit(AgentEvent.llm_end(
+                trace_id=ctx.trace_id,
+                run_id=ctx.run_id,
+                span_id=span_id,
+                parent_span_id=ctx.parent_span_id,
+                agent_name=ctx.agent_name,
+                agent_class=ctx.agent_class,
+                duration_ms=(time.monotonic() - started_at) * 1000,
+                model=model,
+                has_tool_call=messages_have_tool_call(final_output),
+                usage=extract_usage(final_output),
+                chunk_count=1,
+            ))
+            if is_audit_enabled() and final_output:
+                append_audit_record(
+                    'audit.model_output',
+                    {'messages': messages_to_payload(final_output)},
+                    **audit_meta,
+                )
+            return final_output
 
     def _call_tool(self, tool_name: str, tool_args: Union[str, dict] = '{}', **kwargs) -> Union[str, List[ContentItem]]:
         """The interface of calling tools for the agent.
@@ -540,6 +870,172 @@ class Agent(ABC):
             return tool_result
         elif isinstance(tool_result, list) and all(isinstance(item, ContentItem) for item in tool_result):
             return tool_result  # multimodal tool results
+        else:
+            return json.dumps(tool_result, ensure_ascii=False, indent=4)
+
+    async def _acall_tool(
+        self,
+        tool_name: str,
+        tool_args: Union[str, dict] = '{}',
+        **kwargs,
+    ) -> Union[str, List[ContentItem]]:
+        """Async tool call with the same error semantics as :meth:`_call_tool`."""
+        from cat_agent.security.audit import append_audit_record, is_audit_enabled
+
+        ctx = get_run_context()
+        audit_meta = self._audit_context()
+        if is_audit_enabled():
+            append_audit_record(
+                'audit.tool_call',
+                {
+                    'tool_name': tool_name,
+                    'tool_args': format_tool_args(tool_args, ctx),
+                },
+                **audit_meta,
+            )
+
+        if ctx is None or not ctx.handlers:
+            try:
+                tool_result = await self._aexecute_tool(tool_name, tool_args, **kwargs)
+            except (ToolNotFoundError, ToolExecutionError) as ex:
+                if is_audit_enabled():
+                    append_audit_record(
+                        'audit.tool_result',
+                        {
+                            'tool_name': tool_name,
+                            'success': False,
+                            'result': str(ex.message or ex),
+                        },
+                        **audit_meta,
+                    )
+                return ex.message or str(ex)
+            if is_audit_enabled():
+                append_audit_record(
+                    'audit.tool_result',
+                    {
+                        'tool_name': tool_name,
+                        'success': True,
+                        'result': truncate_result_preview(tool_result, ctx),
+                    },
+                    **audit_meta,
+                )
+            return tool_result
+
+        with child_span() as span_id:
+            emit(AgentEvent.tool_start(
+                trace_id=ctx.trace_id,
+                run_id=ctx.run_id,
+                span_id=span_id,
+                parent_span_id=ctx.parent_span_id,
+                agent_name=ctx.agent_name,
+                agent_class=ctx.agent_class,
+                tool_name=tool_name,
+                tool_args=format_tool_args(tool_args, ctx),
+            ))
+            started_at = time.monotonic()
+            try:
+                tool_result = await self._aexecute_tool(tool_name, tool_args, **kwargs)
+            except (ToolNotFoundError, ToolExecutionError) as ex:
+                emit(AgentEvent.tool_error(
+                    trace_id=ctx.trace_id,
+                    run_id=ctx.run_id,
+                    span_id=span_id,
+                    parent_span_id=ctx.parent_span_id,
+                    agent_name=ctx.agent_name,
+                    agent_class=ctx.agent_class,
+                    tool_name=tool_name,
+                    duration_ms=(time.monotonic() - started_at) * 1000,
+                    error_type=type(ex).__name__,
+                    error_message=str(ex.message or ex),
+                ))
+                emit(AgentEvent.tool_end(
+                    trace_id=ctx.trace_id,
+                    run_id=ctx.run_id,
+                    span_id=span_id,
+                    parent_span_id=ctx.parent_span_id,
+                    agent_name=ctx.agent_name,
+                    agent_class=ctx.agent_class,
+                    tool_name=tool_name,
+                    duration_ms=(time.monotonic() - started_at) * 1000,
+                    success=False,
+                    result_chars=len(str(ex.message or ex)),
+                ))
+                if is_audit_enabled():
+                    append_audit_record(
+                        'audit.tool_result',
+                        {
+                            'tool_name': tool_name,
+                            'success': False,
+                            'result': str(ex.message or ex),
+                        },
+                        **audit_meta,
+                    )
+                return ex.message or str(ex)
+            except (ToolServiceError, DocParserError) as ex:
+                emit(AgentEvent.tool_error(
+                    trace_id=ctx.trace_id,
+                    run_id=ctx.run_id,
+                    span_id=span_id,
+                    parent_span_id=ctx.parent_span_id,
+                    agent_name=ctx.agent_name,
+                    agent_class=ctx.agent_class,
+                    tool_name=tool_name,
+                    duration_ms=(time.monotonic() - started_at) * 1000,
+                    error_type=type(ex).__name__,
+                    error_message=str(ex),
+                ))
+                raise
+            emit(AgentEvent.tool_end(
+                trace_id=ctx.trace_id,
+                run_id=ctx.run_id,
+                span_id=span_id,
+                parent_span_id=ctx.parent_span_id,
+                agent_name=ctx.agent_name,
+                agent_class=ctx.agent_class,
+                tool_name=tool_name,
+                duration_ms=(time.monotonic() - started_at) * 1000,
+                success=True,
+                result_chars=result_char_count(tool_result, ctx),
+            ))
+            if is_audit_enabled():
+                append_audit_record(
+                    'audit.tool_result',
+                    {
+                        'tool_name': tool_name,
+                        'success': True,
+                        'result': truncate_result_preview(tool_result, ctx),
+                    },
+                    **audit_meta,
+                )
+            return tool_result
+
+    async def _aexecute_tool(
+        self,
+        tool_name: str,
+        tool_args: Union[str, dict],
+        **kwargs,
+    ) -> Union[str, List[ContentItem]]:
+        if tool_name not in self.function_map:
+            raise ToolNotFoundError(tool_name)
+        tool = self.function_map[tool_name]
+        try:
+            tool_result = await tool.acall(tool_args, **kwargs)
+        except (ToolServiceError, DocParserError) as ex:
+            raise ex
+        except Exception as ex:
+            exception_type = type(ex).__name__
+            exception_message = str(ex)
+            traceback_info = ''.join(traceback.format_tb(ex.__traceback__))
+            error_message = f'An error occurred when calling tool `{tool_name}`:\n' \
+                            f'{exception_type}: {exception_message}\n' \
+                            f'Traceback:\n{traceback_info}'
+            logger.warning(error_message)
+            raise ToolExecutionError(tool_name, error_message) from ex
+
+        if isinstance(tool_result, str):
+            return tool_result
+        elif isinstance(tool_result, list) and all(isinstance(item, ContentItem) for item in tool_result):
+            return tool_result
         else:
             return json.dumps(tool_result, ensure_ascii=False, indent=4)
 

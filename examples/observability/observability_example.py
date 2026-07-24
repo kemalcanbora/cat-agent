@@ -13,25 +13,18 @@ import time
 from cat_agent.agents import Assistant
 from cat_agent.llm.schema import USER, Message
 from cat_agent.observability import CallbackHandler
-from cat_agent.tools.base import BaseTool, register_tool
+from cat_agent.tools import tool
 
 
-@register_tool('get_weather')
-class GetWeather(BaseTool):
-    description = "Get the current weather for a city."
-    parameters = {
-        'type': 'object',
-        'properties': {
-            'city': {'description': 'City name', 'type': 'string'},
-        },
-        'required': ['city'],
-    }
+@tool
+def get_weather(city: str) -> str:
+    """Get the current weather for a city.
 
-    def call(self, params: str, **kwargs) -> str:
-        params = self._verify_json_format_args(params)
-        city = params.get('city', 'unknown')
-        time.sleep(0.2)
-        return f'The weather in {city} is 22 C and sunny.'
+    Args:
+        city: City name
+    """
+    time.sleep(0.2)
+    return f'The weather in {city} is 22 C and sunny.'
 
 
 def on_event(event):
@@ -40,6 +33,7 @@ def on_event(event):
 
 
 def main():
+    # repo_id/filename: uses HF hub cache (or ~/models/<filename>) before downloading.
     llm_cfg = {
         'model_type': 'llama_cpp',
         'repo_id': 'Salesforce/xLAM-2-3b-fc-r-gguf',

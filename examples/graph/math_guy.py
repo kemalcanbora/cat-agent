@@ -13,42 +13,27 @@ works exactly like the other examples.
 
 import os
 
+from typing import List
+
 from cat_agent.agents import Assistant
 from cat_agent.graph import END, AgentNode, FunctionNode, StateGraph
 from cat_agent.graph.state import GraphState
 from cat_agent.observability import MermaidExporter, PrintHandler
-from cat_agent.tools.base import BaseTool, register_tool
+from cat_agent.tools import tool
 from cat_agent.utils.output_beautify import typewriter_print
 
 import torch
 
 
-@register_tool('sum_numbers')
-class SumNumbers(BaseTool):
-    description = """Sum a list of numbers"""
+@tool
+def sum_numbers(numbers: List[float]) -> str:
+    """Sum a list of numbers.
 
-    parameters = {
-        'type': 'object',
-        'properties': {
-            'numbers': {
-                'description': 'The list of numbers to sum.',
-                'type': 'array',
-                'items': {
-                    'type': 'number'
-                }
-            }
-        },
-        'required': ['numbers']
-    }
-
-    def __init__(self, cfg=None):
-        super().__init__(cfg)
-
-    def call(self, params: str, **kwargs) -> str:
-        params = self._verify_json_format_args(params)
-        numbers = params['numbers']
-        result = sum(numbers)
-        return f"The sum of {numbers} is {result}."
+    Args:
+        numbers: The list of numbers to sum.
+    """
+    result = sum(numbers)
+    return f'The sum of {numbers} is {result}.'
 
 
 LLM_CFG = {

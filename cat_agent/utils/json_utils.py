@@ -10,17 +10,69 @@ from cat_agent.utils.misc import print_traceback
 
 
 def json_loads(text: str) -> dict:
-    text = text.strip('\n')
+    text = text.strip().strip('\n')
     if text.startswith('```') and text.endswith('\n```'):
         text = '\n'.join(text.split('\n')[1:-1])
+    text = _light_json_repair(text)
     try:
-        return json.loads(text)
+        result = json.loads(text)
     except json.decoder.JSONDecodeError as json_err:
         try:
-            return json5.loads(text)
+            result = json5.loads(text)
         except ValueError:
             raise json_err
+    # Some models double-encode tool args as a JSON string.
+    for _ in range(2):
+        if isinstance(result, str):
+            result = json_loads(result)
+        else:
+            break
+    return result
 
+
+def _light_json_repair(text: str) -> str:
+    """Fix common LLM tool-arg mistakes without changing valid JSON."""
+    s = text.strip()
+    # Trailing ')' instead of '}'
+    if s.startswith('{') and s.endswith(')'):
+        s = s[:-1] + '}'
+    # Extra closing braces: {"key": "x"}}
+    while s.startswith('{') and s.endswith('}') and s.count('{') < s.count('}'):
+        s = s[:-1]
+    # Trailing ']' instead of '}' for object payloads
+    if s.startswith('{') and s.endswith(']') and s.count('{') >= s.count('}'):
+        s = s[:-1] + '}'
+    # Raw newlines inside the payload → escaped (helps multiline "content")
+    if '\n' in s and s.startswith('{'):
+        s = _escape_newlines_in_json_strings(s)
+    return s
+
+
+def _escape_newlines_in_json_strings(text: str) -> str:
+    """Escape literal newlines that appear inside JSON string values."""
+    out = []
+    in_string = False
+    escape = False
+    for ch in text:
+        if escape:
+            out.append(ch)
+            escape = False
+            continue
+        if ch == '\\' and in_string:
+            out.append(ch)
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            out.append(ch)
+            continue
+        if in_string and ch == '\n':
+            out.append('\\n')
+            continue
+        if in_string and ch == '\r':
+            continue
+        out.append(ch)
+    return ''.join(out)
 
 class PydanticJSONEncoder(json.JSONEncoder):
 

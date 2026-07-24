@@ -33,6 +33,9 @@ class GraphState:
     scratch: Dict[str, Any] = field(default_factory=dict)
     step: int = 0
 
+    # Note: for GroupChat / Router shared scratch, use
+    # ``cat_agent.multi_agent.Blackboard`` on the hub instead of this field.
+
     def copy(self) -> 'GraphState':
         """Return a deep copy of this state.
 

@@ -13,6 +13,7 @@
 import copy
 import logging
 import os
+import threading
 from pprint import pformat
 from typing import Dict, Iterator, List, Optional
 
@@ -48,6 +49,11 @@ class TextChatAtOAI(BaseFnCallModel):
         api_key = api_key or os.getenv('OPENAI_API_KEY')
         api_key = (api_key or 'EMPTY').strip()
 
+        self._async_client = None
+        self._async_client_lock = threading.Lock()
+        self._api_kwargs: Dict = {}
+        self._thread_local = threading.local()
+
         if openai.__version__.startswith('0.'):
             if api_base:
                 openai.api_base = api_base
@@ -55,12 +61,14 @@ class TextChatAtOAI(BaseFnCallModel):
                 openai.api_key = api_key
             self._complete_create = openai.Completion.create
             self._chat_complete_create = openai.ChatCompletion.create
+            self._sync_chat_complete_create = self._chat_complete_create
         else:
             api_kwargs = {}
             if api_base:
                 api_kwargs['base_url'] = api_base
             if api_key:
                 api_kwargs['api_key'] = api_key
+            self._api_kwargs = api_kwargs
 
             def _chat_complete_create(*args, **kwargs):
                 # OpenAI API v1 does not allow the following args, must pass by extra_body
@@ -72,6 +80,10 @@ class TextChatAtOAI(BaseFnCallModel):
                             kwargs['extra_body'][k] = kwargs.pop(k)
                 if 'request_timeout' in kwargs:
                     kwargs['timeout'] = kwargs.pop('request_timeout')
+
+                bridged = getattr(self._thread_local, 'bridged_create', None)
+                if bridged is not None:
+                    return bridged(*args, **kwargs)
 
                 client = openai.OpenAI(**api_kwargs)
                 return client.chat.completions.create(*args, **kwargs)
@@ -92,6 +104,74 @@ class TextChatAtOAI(BaseFnCallModel):
 
             self._complete_create = _complete_create
             self._chat_complete_create = _chat_complete_create
+            self._sync_chat_complete_create = _chat_complete_create
+
+    def _ensure_async_client(self):
+        if openai.__version__.startswith('0.'):
+            raise ModelServiceError(message='AsyncOpenAI requires openai>=1.0')
+        with self._async_client_lock:
+            if self._async_client is None:
+                self._async_client = openai.AsyncOpenAI(**self._api_kwargs)
+            return self._async_client
+
+    async def aclose(self) -> None:
+        with self._async_client_lock:
+            client = self._async_client
+            self._async_client = None
+        if client is not None:
+            await client.close()
+
+    async def achat(
+        self,
+        messages: List,
+        functions: Optional[List[Dict]] = None,
+        extra_generate_cfg: Optional[Dict] = None,
+        **kwargs,
+    ) -> List[Message]:
+        """Async chat via reused ``AsyncOpenAI``. Does not stream tokens; collects the full result."""
+        del kwargs
+        import asyncio
+
+        loop = asyncio.get_running_loop()
+        client = self._ensure_async_client()
+
+        def _bridged_create(*args, **kw):
+            # Normalize kwargs the same way as the sync create wrapper.
+            extra_params = ['top_k', 'repetition_penalty']
+            if any((k in kw) for k in extra_params):
+                kw = dict(kw)
+                kw['extra_body'] = copy.deepcopy(kw.get('extra_body', {}))
+                for k in extra_params:
+                    if k in kw:
+                        kw['extra_body'][k] = kw.pop(k)
+            if 'request_timeout' in kw:
+                kw = dict(kw)
+                kw['timeout'] = kw.pop('request_timeout')
+            # Non-streaming only on the async path (arun collects full turns).
+            kw = dict(kw)
+            kw['stream'] = False
+            fut = asyncio.run_coroutine_threadsafe(
+                client.chat.completions.create(*args, **kw),
+                loop,
+            )
+            return fut.result()
+
+        def _collect() -> List[Message]:
+            self._thread_local.bridged_create = _bridged_create
+            try:
+                # stream=False avoids needing an async-stream sync adapter.
+                result = self.chat(
+                    messages=messages,
+                    functions=functions,
+                    stream=False,
+                    delta_stream=False,
+                    extra_generate_cfg=extra_generate_cfg,
+                )
+                return list(result) if result else []
+            finally:
+                self._thread_local.bridged_create = None
+
+        return await asyncio.to_thread(_collect)
 
     def _chat_stream(
         self,

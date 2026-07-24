@@ -36,6 +36,7 @@ class TestRouter:
     def test_router_prompt_contains_placeholders(self):
         assert "{agent_descs}" in ROUTER_PROMPT
         assert "{agent_names}" in ROUTER_PROMPT
+        assert "After an assistant replies" in ROUTER_PROMPT
 
     def test_router_init_requires_agents(self):
         mock_llm = MagicMock()
@@ -45,7 +46,7 @@ class TestRouter:
         sub_agent.name = "Sub"
         sub_agent.description = "A sub agent"
         with patch("cat_agent.agents.fncall_agent.Memory", return_value=MagicMock()):
-            router = Router(llm=mock_llm, agents=[sub_agent])
+            router = Router(llm=mock_llm, agents=[sub_agent], inject_hub_tools=False)
         assert router._agents == [sub_agent]
         assert router.system_message
         assert "Sub" in router.system_message
@@ -61,18 +62,23 @@ class TestRouter:
         sub_a.description = "A"
         sub_a.run = MagicMock(return_value=iter([[Message(ASSISTANT, "From A", name="AgentA")]]))
         with patch("cat_agent.agents.fncall_agent.Memory", return_value=MagicMock()):
-            router = Router(llm=mock_llm, agents=[sub_a])
-        # Make Assistant._run (super) yield one response with "Call: AgentA"
+            router = Router(llm=mock_llm, agents=[sub_a], inject_hub_tools=False)
+
+        calls = iter([
+            [Message(ASSISTANT, "Call: AgentA\nReply: (to be filled)", name=None)],
+            [Message(ASSISTANT, "Thanks, here is the answer.", name=None)],
+        ])
+
         def fake_super_run(self, messages, lang=None, **kwargs):
-            yield [Message(ASSISTANT, "Call: AgentA\nReply: (to be filled)", name=None)]
+            yield next(calls)
+
         with patch.object(Assistant, "_run", fake_super_run):
             out = list(router._run([Message(SYSTEM, "Sys"), Message(USER, "Hi")], lang="en"))
-        # Router should have called selected_agent.run and yielded that response
         sub_a.run.assert_called_once()
         assert len(out) >= 1
-        assert out[-1][0].content == "From A" or "From A" in str(out)
+        assert out[-1][-1].content == "Thanks, here is the answer."
 
-    def test_run_uses_first_agent_when_selected_name_invalid(self):
+    def test_run_unknown_agent_feeds_error_back(self):
         from cat_agent.agents.assistant import Assistant
 
         mock_llm = MagicMock()
@@ -83,10 +89,71 @@ class TestRouter:
         sub_a.description = "Only"
         sub_a.run = MagicMock(return_value=iter([[Message(ASSISTANT, "Ok", name="OnlyAgent")]]))
         with patch("cat_agent.agents.fncall_agent.Memory", return_value=MagicMock()):
-            router = Router(llm=mock_llm, agents=[sub_a])
+            router = Router(llm=mock_llm, agents=[sub_a], inject_hub_tools=False)
+
+        calls = iter([
+            [Message(ASSISTANT, "Call: NonExistent\nReply: ...", name=None)],
+            [Message(ASSISTANT, "Answering directly.", name=None)],
+        ])
+
         def fake_super_run(self, messages, lang=None, **kwargs):
-            yield [Message(ASSISTANT, "Call: NonExistent\nReply: ...", name=None)]
+            yield next(calls)
+
         with patch.object(Assistant, "_run", fake_super_run):
-            list(router._run([Message(SYSTEM, "Sys"), Message(USER, "Hi")], lang="en"))
-        # Fallback to agent_names[0] = "OnlyAgent"
+            out = list(router._run([Message(SYSTEM, "Sys"), Message(USER, "Hi")], lang="en"))
+        # No longer falls back to first agent — error is fed back, then direct answer
+        sub_a.run.assert_not_called()
+        assert out[-1][-1].content == "Answering directly."
+
+    def test_call_with_leaked_text_is_truncated(self):
+        from cat_agent.agents.assistant import Assistant
+        from cat_agent.agents.router import _truncate_to_call
+
+        leaked = "Call: AgentA\nNow I will add 1+2=3 myself..."
+        assert _truncate_to_call(leaked) == "Call: AgentA"
+
+        mock_llm = MagicMock()
+        mock_llm.model = "gpt-4"
+        mock_llm.model_type = "openai"
+        sub_a = BasicAgent(llm=mock_llm)
+        sub_a.name = "AgentA"
+        sub_a.description = "A"
+        sub_a.run = MagicMock(return_value=iter([[Message(ASSISTANT, "From A", name="AgentA")]]))
+        with patch("cat_agent.agents.fncall_agent.Memory", return_value=MagicMock()):
+            router = Router(llm=mock_llm, agents=[sub_a], inject_hub_tools=False)
+
+        calls = iter([
+            [Message(ASSISTANT, leaked)],
+            [Message(ASSISTANT, "Done.")],
+        ])
+
+        def fake_super_run(self, messages, lang=None, **kwargs):
+            yield next(calls)
+
+        with patch.object(Assistant, "_run", fake_super_run):
+            out = list(router._run([Message(USER, "Hi")], lang="en"))
+
+        # Streamed Call turn should not include the leaked calculation
+        call_batches = [b for b in out if b and "Call:" in str(b[-1].content)]
+        assert call_batches
+        assert "1+2" not in call_batches[0][-1].content
         sub_a.run.assert_called_once()
+        # Specialist sees a clean user message, not Call: scaffolding
+        sent = sub_a.run.call_args.kwargs.get("messages") or sub_a.run.call_args[0][0]
+        assert all("Call:" not in str(m.content) for m in sent)
+        assert sent[0].role == USER
+        assert sent[0].content == "Hi"
+
+    def test_adapt_for_specialist_keeps_prior_answers(self):
+        from cat_agent.agents.router import _adapt_for_specialist
+
+        working = [
+            Message(USER, "Sum 1 and 2"),
+            Message(ASSISTANT, "Call: MathGuy\nReply:", name="Router"),
+            Message(USER, "The sum is 3.", name="MathGuy"),
+        ]
+        out = _adapt_for_specialist(working, ["MathGuy", "Explainer"])
+        assert len(out) == 2
+        assert out[0].role == USER and out[0].content == "Sum 1 and 2"
+        assert out[1].role == ASSISTANT and out[1].name == "MathGuy"
+        assert "Call:" not in out[1].content

@@ -31,6 +31,13 @@ On-prem security platform for regulated sectors:
 - **SBOM** — CycloneDX bill of materials generated on each release
 - **CLI** — `cat-agent offline-check`, `encrypt-storage`, `fetch-runtime`, and more
 
+### Recent additions (post-0.7)
+
+- **`@tool` decorator** — define tools from typed functions; schemas from type hints + docstrings
+- **Async API** — `arun` / `arun_nonstream` with concurrent tool calls in one model turn
+- **Multi-agent package** — blackboard, handoff, ask-agent, and artifact tools for `GroupChat` teams
+- **GGUF path resolve** — HF hub / `~/models` cache lookup for `llama_cpp` models
+
 ### Security & on-prem controls
 
 | Control | Purpose |
@@ -299,6 +306,9 @@ a local Rust toolchain.
 ### Features
 
 - **Agent workflows** — `Agent`, `Assistant`, `ReActChat`, `FnCallAgent`, `DocQAAgent`, `GroupChat`, `Router`, and more
+- **Async runs** — `arun` / `arun_nonstream`; parallel tool calls via `asyncio.gather` (does not stream tokens)
+- **`@tool` decorator** — register plain sync/async functions as OpenAI-compatible tools
+- **Multi-agent collaboration** — blackboard artifacts, handoff, and ask-agent tools (`cat_agent.multi_agent`)
 - **Graph workflows (DAG)** — Compose agents and tools into branching/looping graphs with `StateGraph`; a compiled graph is itself an `Agent`
 - **Function calling** — Native tool/function support for LLMs
 - **RAG** — Native keyword (BM25), vector (HNSW), and hybrid search; no LangChain/FAISS/LEANN
@@ -431,6 +441,99 @@ logger.debug("Processing query: {}", query)
 | `CAT_AGENT_LOG_LEVEL` | `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` | *(silent)* |
 | `CAT_AGENT_LOG_FILE` | file path | *(none)* |
 | `CAT_AGENT_LOG_FORMAT` | `pretty`, `json` | `pretty` |
+
+## Defining tools with `@tool`
+
+Prefer a plain function when the tool is a thin wrapper around typed arguments.
+Schemas are derived from type hints and the docstring (`docstring_parser` supports
+Google, NumPy, and reST). Class-based `BaseTool` tools keep working unchanged.
+
+**Before** (hand-written class):
+
+```python
+from cat_agent.tools.base import BaseTool, register_tool
+
+@register_tool('sum_two_number')
+class SumTwoNumber(BaseTool):
+    description = 'Adds two numbers.'
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'a': {'description': 'First number', 'type': 'number'},
+            'b': {'description': 'Second number', 'type': 'number'},
+        },
+        'required': ['a', 'b'],
+    }
+
+    def call(self, params, **kwargs):
+        params = self._verify_json_format_args(params)
+        return str(float(params['a']) + float(params['b']))
+```
+
+**After** (`@tool`):
+
+```python
+from cat_agent.tools import tool
+
+@tool
+def sum_two_number(a: float, b: float) -> float:
+    """Adds two numbers.
+
+    Args:
+        a: First number
+        b: Second number
+    """
+    return a + b
+
+# Still a normal function:
+assert sum_two_number(2, 3) == 5.0
+
+# And a registered BaseTool for agents:
+# Assistant(..., function_list=['sum_two_number'])
+# Assistant(..., function_list=[sum_two_number])
+```
+
+See `examples/tool_decorator/sum_two_number.py`.
+
+## Async API (`arun`)
+
+Cat-Agent provides a native async entry point alongside sync `run` / `run_nonstream`:
+
+| Sync | Async |
+|---|---|
+| `run` | `arun` |
+| `run_nonstream` | `arun_nonstream` |
+
+**The async path does not stream tokens.** `arun` collects each model turn fully and yields complete message lists (not token deltas). Prefer `arun_nonstream` when you only need the final response.
+
+```python
+import asyncio
+from cat_agent.agents import Assistant
+
+async def main():
+    agent = Assistant(llm={'model': 'qwen2.5', 'model_server': 'http://localhost:8000/v1'})
+    result = await agent.arun_nonstream([{'role': 'user', 'content': 'Hello'}])
+    print(result)
+    await agent.aclose()
+
+asyncio.run(main())
+```
+
+When the model returns **multiple tool calls in one turn**, `FnCallAgent.arun` runs them concurrently (`asyncio.gather`). Sync tools are offloaded with `asyncio.to_thread`; `@tool` async functions and MCP tools use native awaitables (`acall`).
+
+Calling sync `run()` from inside a running event loop still works but **blocks** that loop and emits a one-time `RuntimeWarning` — use `arun()` from FastAPI/Jupyter instead.
+
+### Which LLM backends benefit?
+
+| Backend | Async benefit |
+|---|---|
+| `oai` (OpenAI-compatible HTTP) | Real — reused `AsyncOpenAI` client, non-blocking HTTP |
+| `llama_cpp`, `transformers`, `mlx_lm`, `openvino` | Loop stays responsive via thread offload only; **no** inference concurrency gain on one model instance |
+
+Optional lifecycle: `async with agent:` calls `aclose()` (closes the reused async HTTP client). Do not call `arun` after `aclose`.
+
+See `examples/async_agent/physics_guy.py` for a real Assistant that uses ``arun``
+with parallel physics tools (kinetic energy, potential energy, equatorial speed).
 
 ## Graph Workflows (DAG)
 
@@ -565,11 +668,12 @@ bot = Assistant(
 
 | Component | Description |
 |---|---|
-| `cat_agent.agent` | Base `Agent` class |
+| `cat_agent.agent` | Base `Agent` class (`run` / `arun`) |
 | `cat_agent.agents` | Assistant, ReActChat, FnCallAgent, DocQA, GroupChat, Router |
+| `cat_agent.multi_agent` | Blackboard, handoff, ask-agent, artifact tools for team workflows |
 | `cat_agent.graph` | `StateGraph` / `GraphAgent` DAG engine with Agent/Function/Tool nodes |
-| `cat_agent.llm` | Chat model backends (OAI, LlamaCpp, LlamaCpp Vision, OpenVINO, Transformers) |
-| `cat_agent.tools` | CodeInterpreter, WASMCodeInterpreter, Retrieval, DocParser, Storage, MCP, and more |
+| `cat_agent.llm` | Chat model backends (OAI, LlamaCpp, LlamaCpp Vision, OpenVINO, Transformers, MLX) |
+| `cat_agent.tools` | `@tool`, CodeInterpreter, WASMCodeInterpreter, Retrieval, DocParser, Storage, MCP, and more |
 | `cat_agent.memory` | Memory, RAG, and context utilities |
 | `cat_agent.log` | Loguru-based structured logging |
 | `cat_agent.observability` | Run/node/LLM/tool event hooks and handlers (incl. Mermaid, OpenTelemetry) |
@@ -583,12 +687,15 @@ bot = Assistant(
 
 | Path | Topic |
 |---|---|
+| `examples/tool_decorator/` | `@tool` function decorator |
+| `examples/async_agent/` | `arun` + parallel tools (PhysicsGuy / llama_cpp) |
 | `examples/transformers_math_guy/` | Transformers + function calling |
 | `examples/llama_cpp_math_guy/` | LlamaCpp + tools |
 | `examples/mlx_lm_math_guy/` | MLX-LM (Apple silicon) |
 | `examples/llama_cpp_vision/` | Multimodal LlamaCpp |
 | `examples/doc_parser_agent/` | Document Q&A |
-| `examples/multi_agent/` | GroupChat and Router |
+| `examples/multi_agent/` | GroupChat, Router, and team blackboard demo |
+| `examples/mcp_service/` | Expose an agent as an MCP server |
 | `examples/graph/` | DAG workflow (`StateGraph`) |
 | `examples/observability/` | Trace handlers |
 | `examples/rag_keyword/` | Rust BM25 keyword search |

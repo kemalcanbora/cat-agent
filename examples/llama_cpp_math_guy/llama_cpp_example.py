@@ -1,34 +1,20 @@
 from cat_agent.agents import Assistant
-from cat_agent.tools.base import BaseTool, register_tool
+from cat_agent.tools import tool
 
 
-@register_tool('sum_two_number')
-class SumTwoNumber(BaseTool):
-    description = "Add two numbers together. Provide 'a' and 'b' as numbers."
-    parameters = {
-        'type': 'object',
-        'properties': {
-            'a': {'description': 'The first number', 'type': 'number'},
-            'b': {'description': 'The second number', 'type': 'number'},
-        },
-        'required': ['a', 'b'],
-    }
+@tool
+def sum_two_number(a: float, b: float) -> str:
+    """Add two numbers together. Provide 'a' and 'b' as numbers.
 
-    def __init__(self, cfg=None):
-        super().__init__(cfg)
+    Args:
+        a: The first number
+        b: The second number
+    """
+    return f'The sum of {a} and {b} is {a + b}.'
 
-    def call(self, params: str, **kwargs) -> str:
-        params = self._verify_json_format_args(params)
-        try:
-            a = float(params["a"])
-            b = float(params["b"])
-        except (KeyError, ValueError, TypeError):
-            return "Error: Please provide valid numbers for 'a' and 'b'."
-        total = a + b
-        return f"The sum of {a} and {b} is {total}."
 
 def main():
-    # Use a local GGUF file, or repo_id + filename for HuggingFace
+    # repo_id/filename: uses HF hub cache (or ~/models/<filename>) before downloading.
     llm_cfg = {
         "model_type": "llama_cpp",
         "repo_id": "Salesforce/xLAM-2-3b-fc-r-gguf",
