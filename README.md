@@ -29,7 +29,7 @@ On-prem security platform for regulated sectors:
 - **PII redaction** — offline regex (and optional Presidio) at RAG, prompt, and audit layers
 - **Deployment package** — `deploy/docker-compose.yml` for air-gapped Docker installs
 - **SBOM** — CycloneDX bill of materials generated on each release
-- **CLI** — `cat-agent offline-check`, `encrypt-storage`, `fetch-runtime`, and more
+- **CLI** — `cat-agent offline-check`, `synth`, `encrypt-storage`, `fetch-runtime`, and more
 
 ### What's new in 0.8.1
 
