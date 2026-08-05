@@ -90,6 +90,9 @@ pii = [
     "presidio-analyzer>=2.2.0",
     "presidio-anonymizer>=2.2.0",
 ]
+synthesis = [
+    "pyyaml>=6.0",
+]
 test = [
     "pytest",
     "pytest-cov",
@@ -97,7 +100,7 @@ test = [
     "rank_bm25",
 ]
 all = [
-    "cat-agent[rag,mcp,otel,python_executor,code_interpreter,transformers,llama,wasm-bundled,mlx]",
+    "cat-agent[rag,mcp,otel,python_executor,code_interpreter,transformers,llama,wasm-bundled,mlx,synthesis]",
 ]
 
 [project.scripts]

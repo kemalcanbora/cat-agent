@@ -17,6 +17,7 @@ import time
 import traceback
 import warnings
 from abc import ABC, abstractmethod
+from dataclasses import asdict
 from typing import AsyncIterator, Dict, Iterator, List, Optional, Tuple, TYPE_CHECKING, Union
 
 from cat_agent.llm import get_chat_model
@@ -29,12 +30,16 @@ from cat_agent.observability.events import AgentEvent
 from cat_agent.observability.helpers import (
     agent_model_name,
     extract_usage,
+    format_obs_io,
+    format_llm_obs_output,
+    format_run_obs_output,
     format_tool_args,
     messages_have_tool_call,
     messages_to_payload,
     result_char_count,
     truncate_result_preview,
 )
+from cat_agent.settings import PROMPT_TRUNCATION_TOLERANCE
 from cat_agent.tools import TOOL_REGISTRY, BaseTool, MCPManager
 from cat_agent.tools.base import OPTIONAL_TOOL_REGISTRY, is_tool_allowed_for_agent
 from cat_agent.tools.base import ToolExecutionError, ToolNotFoundError, ToolServiceError
@@ -223,6 +228,7 @@ class Agent(ABC):
     ) -> Iterator[List[Union[Message, Dict]]]:
         started_at = time.monotonic()
         yield_count = 0
+        last_rsp: List[Union[Message, Dict]] = []
         emit(AgentEvent.run_start(
             trace_id=ctx.trace_id,
             run_id=ctx.run_id,
@@ -232,10 +238,12 @@ class Agent(ABC):
             agent_class=ctx.agent_class,
             message_count=len(new_messages),
             lang=lang,
+            input=format_obs_io(new_messages, ctx),
         ))
         try:
             for rsp in self._yield_run_responses(self._run(messages=new_messages, **run_kwargs), return_message_type):
                 yield_count += 1
+                last_rsp = rsp
                 yield rsp
             emit(AgentEvent.run_end(
                 trace_id=ctx.trace_id,
@@ -246,6 +254,8 @@ class Agent(ABC):
                 agent_class=ctx.agent_class,
                 duration_ms=(time.monotonic() - started_at) * 1000,
                 yield_count=yield_count,
+                output=format_run_obs_output(last_rsp, ctx),
+                metrics=asdict(ctx.metrics),
             ))
         except Exception as ex:
             emit(AgentEvent.run_error(
@@ -397,6 +407,7 @@ class Agent(ABC):
     ) -> AsyncIterator[List[Union[Message, Dict]]]:
         started_at = time.monotonic()
         yield_count = 0
+        last_rsp: List[Union[Message, Dict]] = []
         emit(AgentEvent.run_start(
             trace_id=ctx.trace_id,
             run_id=ctx.run_id,
@@ -406,6 +417,7 @@ class Agent(ABC):
             agent_class=ctx.agent_class,
             message_count=len(new_messages),
             lang=lang,
+            input=format_obs_io(new_messages, ctx),
         ))
         try:
             async for rsp in self._ayield_run_responses(
@@ -413,6 +425,7 @@ class Agent(ABC):
                 return_message_type,
             ):
                 yield_count += 1
+                last_rsp = rsp
                 yield rsp
             emit(AgentEvent.run_end(
                 trace_id=ctx.trace_id,
@@ -423,6 +436,8 @@ class Agent(ABC):
                 agent_class=ctx.agent_class,
                 duration_ms=(time.monotonic() - started_at) * 1000,
                 yield_count=yield_count,
+                output=format_run_obs_output(last_rsp, ctx),
+                metrics=asdict(ctx.metrics),
             ))
         except Exception as ex:
             emit(AgentEvent.run_error(
@@ -520,6 +535,55 @@ class Agent(ABC):
             'agent_class': ctx.agent_class,
         }
 
+    def _accumulate_llm_metrics(
+        self,
+        ctx,
+        final_output: List[Message],
+        started_at: float,
+        messages_for_llm: List[Message],
+    ) -> None:
+        usage = extract_usage(final_output)
+        ctx.metrics.llm_calls += 1
+        ctx.metrics.llm_ms += (time.monotonic() - started_at) * 1000
+        if usage:
+            ctx.metrics.usage_available = True
+            ctx.metrics.prompt_tokens += usage.get('prompt_tokens', 0) or 0
+            ctx.metrics.completion_tokens += usage.get('completion_tokens', 0) or 0
+            self._maybe_warn_silent_prompt_truncation(ctx, messages_for_llm, usage)
+
+    def _maybe_warn_silent_prompt_truncation(
+        self,
+        ctx,
+        messages_for_llm: List[Message],
+        usage: dict,
+    ) -> None:
+        if ctx.metrics.silent_truncation_warned:
+            return
+        reported = usage.get('prompt_tokens', 0) or 0
+        if not reported:
+            return
+        from cat_agent.utils.message_utils import extract_text_from_message
+        from cat_agent.utils.tokenization_qwen import count_tokens
+
+        local_estimate = sum(
+            count_tokens(extract_text_from_message(m, add_upload_info=False))
+            for m in messages_for_llm
+        )
+        if not local_estimate:
+            return
+        if reported < local_estimate * PROMPT_TRUNCATION_TOLERANCE:
+            ctx.metrics.silent_truncation_warned = True
+            logger.warning(
+                'Model reported {} prompt tokens but ~{} were sent — the server likely '
+                'truncated the prompt (check Ollama num_ctx).',
+                reported,
+                local_estimate,
+            )
+
+    def _accumulate_tool_metrics(self, ctx, started_at: float) -> None:
+        ctx.metrics.tool_calls += 1
+        ctx.metrics.tool_ms += (time.monotonic() - started_at) * 1000
+
     def _call_llm(
         self,
         messages: List[Message],
@@ -568,6 +632,7 @@ class Agent(ABC):
 
         if ctx is None or not ctx.handlers:
             final_output: List[Message] = []
+            started_at = time.monotonic()
             if self.rate_limiter is not None:
                 with self.rate_limiter.limit() as waited:
                     self._emit_rate_limit_wait(scope='llm', waited_seconds=waited)
@@ -580,6 +645,8 @@ class Agent(ABC):
                     if output:
                         final_output = output
                     yield output
+            if ctx is not None:
+                self._accumulate_llm_metrics(ctx, final_output, started_at, messages_for_llm)
             if is_audit_enabled() and final_output:
                 append_audit_record(
                     'audit.model_output',
@@ -601,6 +668,7 @@ class Agent(ABC):
                 model=model,
                 message_count=len(messages_for_llm),
                 tool_count=tool_count,
+                input=format_obs_io(messages_for_llm, ctx),
             ))
             started_at = time.monotonic()
             chunk_count = 0
@@ -632,6 +700,7 @@ class Agent(ABC):
                     yield from _consume_chat()
             else:
                 yield from _consume_chat()
+            self._accumulate_llm_metrics(ctx, final_output, started_at, messages_for_llm)
             emit(AgentEvent.llm_end(
                 trace_id=ctx.trace_id,
                 run_id=ctx.run_id,
@@ -644,6 +713,7 @@ class Agent(ABC):
                 has_tool_call=messages_have_tool_call(final_output),
                 usage=extract_usage(final_output),
                 chunk_count=chunk_count,
+                output=format_llm_obs_output(final_output, ctx),
             ))
             if is_audit_enabled() and final_output:
                 append_audit_record(
@@ -709,7 +779,10 @@ class Agent(ABC):
                 return await _invoke()
 
         if ctx is None or not ctx.handlers:
+            started_at = time.monotonic()
             final_output = await _invoke_limited()
+            if ctx is not None:
+                self._accumulate_llm_metrics(ctx, final_output, started_at, messages_for_llm)
             if is_audit_enabled() and final_output:
                 append_audit_record(
                     'audit.model_output',
@@ -731,6 +804,7 @@ class Agent(ABC):
                 model=model,
                 message_count=len(messages_for_llm),
                 tool_count=tool_count,
+                input=format_obs_io(messages_for_llm, ctx),
             ))
             started_at = time.monotonic()
             if self.rate_limiter is not None:
@@ -740,6 +814,7 @@ class Agent(ABC):
                     final_output = await _invoke()
             else:
                 final_output = await _invoke()
+            self._accumulate_llm_metrics(ctx, final_output, started_at, messages_for_llm)
             emit(AgentEvent.llm_end(
                 trace_id=ctx.trace_id,
                 run_id=ctx.run_id,
@@ -752,6 +827,7 @@ class Agent(ABC):
                 has_tool_call=messages_have_tool_call(final_output),
                 usage=extract_usage(final_output),
                 chunk_count=1,
+                output=format_llm_obs_output(final_output, ctx),
             ))
             if is_audit_enabled() and final_output:
                 append_audit_record(
@@ -786,9 +862,12 @@ class Agent(ABC):
             )
 
         if ctx is None or not ctx.handlers:
+            started_at = time.monotonic()
             try:
                 tool_result, _attempts = self._execute_tool(tool_name, tool_args, **kwargs)
             except (ToolNotFoundError, ToolExecutionError) as ex:
+                if ctx is not None:
+                    self._accumulate_tool_metrics(ctx, started_at)
                 if is_audit_enabled():
                     append_audit_record(
                         'audit.tool_result',
@@ -800,6 +879,8 @@ class Agent(ABC):
                         **audit_meta,
                     )
                 return ex.message or str(ex)
+            if ctx is not None:
+                self._accumulate_tool_metrics(ctx, started_at)
             if is_audit_enabled():
                 append_audit_record(
                     'audit.tool_result',
@@ -830,6 +911,7 @@ class Agent(ABC):
                     tool_name, tool_args, _obs_span_id=span_id, **kwargs)
             except (ToolNotFoundError, ToolExecutionError) as ex:
                 attempts = getattr(ex, 'attempts', attempts)
+                self._accumulate_tool_metrics(ctx, started_at)
                 emit(AgentEvent.tool_error(
                     trace_id=ctx.trace_id,
                     run_id=ctx.run_id,
@@ -855,6 +937,7 @@ class Agent(ABC):
                     success=False,
                     result_chars=len(str(ex.message or ex)),
                     attempts=attempts,
+                    output=str(ex.message or ex),
                 ))
                 if is_audit_enabled():
                     append_audit_record(
@@ -868,6 +951,7 @@ class Agent(ABC):
                     )
                 return ex.message or str(ex)
             except (ToolServiceError, DocParserError) as ex:
+                self._accumulate_tool_metrics(ctx, started_at)
                 emit(AgentEvent.tool_error(
                     trace_id=ctx.trace_id,
                     run_id=ctx.run_id,
@@ -882,6 +966,7 @@ class Agent(ABC):
                     attempts=getattr(ex, 'attempts', attempts),
                 ))
                 raise
+            self._accumulate_tool_metrics(ctx, started_at)
             emit(AgentEvent.tool_end(
                 trace_id=ctx.trace_id,
                 run_id=ctx.run_id,
@@ -894,6 +979,7 @@ class Agent(ABC):
                 success=True,
                 result_chars=result_char_count(tool_result, ctx),
                 attempts=attempts,
+                output=truncate_result_preview(tool_result, ctx),
             ))
             if is_audit_enabled():
                 append_audit_record(
@@ -1091,9 +1177,12 @@ class Agent(ABC):
             )
 
         if ctx is None or not ctx.handlers:
+            started_at = time.monotonic()
             try:
                 tool_result, _attempts = await self._aexecute_tool(tool_name, tool_args, **kwargs)
             except (ToolNotFoundError, ToolExecutionError) as ex:
+                if ctx is not None:
+                    self._accumulate_tool_metrics(ctx, started_at)
                 if is_audit_enabled():
                     append_audit_record(
                         'audit.tool_result',
@@ -1105,6 +1194,8 @@ class Agent(ABC):
                         **audit_meta,
                     )
                 return ex.message or str(ex)
+            if ctx is not None:
+                self._accumulate_tool_metrics(ctx, started_at)
             if is_audit_enabled():
                 append_audit_record(
                     'audit.tool_result',
@@ -1135,6 +1226,7 @@ class Agent(ABC):
                     tool_name, tool_args, _obs_span_id=span_id, **kwargs)
             except (ToolNotFoundError, ToolExecutionError) as ex:
                 attempts = getattr(ex, 'attempts', attempts)
+                self._accumulate_tool_metrics(ctx, started_at)
                 emit(AgentEvent.tool_error(
                     trace_id=ctx.trace_id,
                     run_id=ctx.run_id,
@@ -1160,6 +1252,7 @@ class Agent(ABC):
                     success=False,
                     result_chars=len(str(ex.message or ex)),
                     attempts=attempts,
+                    output=str(ex.message or ex),
                 ))
                 if is_audit_enabled():
                     append_audit_record(
@@ -1173,6 +1266,7 @@ class Agent(ABC):
                     )
                 return ex.message or str(ex)
             except (ToolServiceError, DocParserError) as ex:
+                self._accumulate_tool_metrics(ctx, started_at)
                 emit(AgentEvent.tool_error(
                     trace_id=ctx.trace_id,
                     run_id=ctx.run_id,
@@ -1187,6 +1281,7 @@ class Agent(ABC):
                     attempts=getattr(ex, 'attempts', attempts),
                 ))
                 raise
+            self._accumulate_tool_metrics(ctx, started_at)
             emit(AgentEvent.tool_end(
                 trace_id=ctx.trace_id,
                 run_id=ctx.run_id,
@@ -1199,6 +1294,7 @@ class Agent(ABC):
                 success=True,
                 result_chars=result_char_count(tool_result, ctx),
                 attempts=attempts,
+                output=truncate_result_preview(tool_result, ctx),
             ))
             if is_audit_enabled():
                 append_audit_record(

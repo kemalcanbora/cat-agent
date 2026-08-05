@@ -1,4 +1,5 @@
 import copy
+import os
 from typing import Dict, Iterator, List, Optional, Union
 
 from cat_agent.llm.base import register_llm
@@ -72,6 +73,13 @@ class LlamaCpp(BaseFnCallModel):
         logger.info(f"Loading llama.cpp model from: {resolved}")
         self.llm = Llama(model_path=resolved, **llama_kwargs)
         self._supports_function_calling = True
+        # Expose a stable model id for observability (BaseChatModel.model is often empty).
+        if not self.model:
+            self.model = filename or os.path.basename(str(resolved))
+        self.filename = filename
+        self.model_path = model_path or str(resolved)
+        if repo_id:
+            self.repo_id = repo_id
 
     @property
     def support_multimodal_input(self) -> bool:

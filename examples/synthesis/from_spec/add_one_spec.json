@@ -1,0 +1,19 @@
+{
+  "name": "add_one_demo",
+  "description": "Return the integer one greater than x.",
+  "parameters": {
+    "x": {
+      "type": "integer",
+      "description": "Integer to increment"
+    }
+  },
+  "returns": "integer",
+  "examples": [
+    {"inputs": {"x": 0}, "expected": 1, "note": "zero"},
+    {"inputs": {"x": 1}, "expected": 2},
+    {"inputs": {"x": -1}, "expected": 0, "note": "negative"},
+    {"inputs": {"x": 41}, "expected": 42},
+    {"inputs": {"x": 100}, "expected": 101, "note": "edge-ish"}
+  ],
+  "holdout_ratio": 0.3
+}

@@ -22,6 +22,7 @@ Limitations:
 import glob
 import os
 import tempfile
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 
@@ -34,8 +35,27 @@ from cat_agent.utils.utils import extract_code, has_chinese_chars
 # Default fuel budget — enough for most reasonable computations.
 # 400M fuel ≈ a few seconds of CPU work; raise for heavier tasks.
 DEFAULT_FUEL = 400_000_000
+# Cap sandbox stdout/stderr reads so a print-loop cannot OOM the host.
+DEFAULT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024
+_OUTPUT_TRUNCATION_MARKER = '...[truncated]...\n'
 
 from cat_agent.tools.resource.wasm_runtime_loader import ensure_wasm_runtime
+
+
+def _read_capped_tail(path: str, max_bytes: int) -> tuple[str, bool]:
+    """Read at most *max_bytes* from the **end** of *path* (sentinel survives)."""
+    if not os.path.isfile(path):
+        return '', False
+    size = os.path.getsize(path)
+    if size <= max_bytes:
+        with open(path, 'rb') as handle:
+            text = handle.read().decode('utf-8', errors='replace')
+        return text.rstrip('\n'), False
+    with open(path, 'rb') as handle:
+        handle.seek(max(0, size - max_bytes))
+        data = handle.read()
+    text = data.decode('utf-8', errors='replace')
+    return (_OUTPUT_TRUNCATION_MARKER + text).rstrip('\n'), True
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +70,7 @@ class WasmPythonRuntime:
         self._engine = None
         self._module = None
         self._wasm_path: Optional[str] = None
+        self._init_lock = threading.Lock()
 
     def _find_wasm_binary(self) -> str:
         """Locate the python*.wasm file anywhere under runtime_dir."""
@@ -75,28 +96,38 @@ class WasmPythonRuntime:
         """Return a cached (Engine, Module) pair, creating them on first call."""
         if self._engine is not None and self._module is not None:
             return self._engine, self._module
+        with self._init_lock:
+            if self._engine is not None and self._module is not None:
+                return self._engine, self._module
 
-        from wasmtime import Config, Engine, Module
+            from wasmtime import Config, Engine, Module
 
-        wasm_path = self._find_wasm_binary()
+            wasm_path = self._find_wasm_binary()
 
-        cfg = Config()
-        cfg.consume_fuel = True
-        cfg.cache = True
+            cfg = Config()
+            cfg.consume_fuel = True
+            cfg.cache = True
 
-        self._engine = Engine(cfg)
+            self._engine = Engine(cfg)
 
-        logger.info('Compiling Python WASM module (cached after first load) ...')
-        self._module = Module.from_file(self._engine, wasm_path)
+            logger.info('Compiling Python WASM module (cached after first load) ...')
+            self._module = Module.from_file(self._engine, wasm_path)
 
-        return self._engine, self._module
+            return self._engine, self._module
 
     # -- execution ------------------------------------------------------------
 
-    def execute(self, code: str, fuel: int = DEFAULT_FUEL) -> dict:
+    def execute(
+        self,
+        code: str,
+        fuel: int = DEFAULT_FUEL,
+        *,
+        max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
+    ) -> dict:
         """Run *code* inside the WASM sandbox and return results.
 
-        Returns a dict with keys: stdout, stderr, error, fuel_consumed.
+        Returns a dict with keys: stdout, stderr, error, fuel_consumed,
+        stdout_truncated, stderr_truncated.
         """
         from wasmtime import Linker, Store, WasiConfig
 
@@ -135,20 +166,16 @@ class WasmPythonRuntime:
                 else:
                     error = error_msg
 
-            stdout = ''
-            stderr = ''
-            if os.path.isfile(stdout_path):
-                with open(stdout_path) as f:
-                    stdout = f.read()
-            if os.path.isfile(stderr_path):
-                with open(stderr_path) as f:
-                    stderr = f.read()
+            stdout, stdout_truncated = _read_capped_tail(stdout_path, max_output_bytes)
+            stderr, stderr_truncated = _read_capped_tail(stderr_path, max_output_bytes)
 
             return {
-                'stdout': stdout.rstrip('\n'),
-                'stderr': stderr.rstrip('\n'),
+                'stdout': stdout,
+                'stderr': stderr,
                 'error': error,
                 'fuel_consumed': fuel - store.get_fuel(),
+                'stdout_truncated': stdout_truncated,
+                'stderr_truncated': stderr_truncated,
             }
 
 
@@ -189,7 +216,10 @@ class WasmCodeInterpreter(BaseTool):
         configured_dir = self.cfg.get('runtime_dir')
         self.runtime_dir = ensure_wasm_runtime(configured_dir)
         self.fuel: int = self.cfg.get('fuel', DEFAULT_FUEL)
+        self.max_output_bytes: int = int(
+            self.cfg.get('max_output_bytes', DEFAULT_MAX_OUTPUT_BYTES))
         self._runtime: Optional[WasmPythonRuntime] = None
+        self._runtime_lock = threading.Lock()
 
     @property
     def args_format(self) -> str:
@@ -205,7 +235,9 @@ class WasmCodeInterpreter(BaseTool):
 
     def _get_runtime(self) -> WasmPythonRuntime:
         if self._runtime is None:
-            self._runtime = WasmPythonRuntime(self.runtime_dir)
+            with self._runtime_lock:
+                if self._runtime is None:
+                    self._runtime = WasmPythonRuntime(self.runtime_dir)
         return self._runtime
 
     def call(self, params: Union[str, dict], **kwargs) -> str:
@@ -219,7 +251,8 @@ class WasmCodeInterpreter(BaseTool):
             return ''
 
         runtime = self._get_runtime()
-        result = runtime.execute(code, fuel=self.fuel)
+        result = runtime.execute(
+            code, fuel=self.fuel, max_output_bytes=self.max_output_bytes)
         return self._format_result(result)
 
     @staticmethod

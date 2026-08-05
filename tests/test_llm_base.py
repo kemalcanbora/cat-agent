@@ -179,3 +179,27 @@ class TestTruncateInputMessagesRoughly:
             )
             total += count_tokens(text)
         assert total <= 128
+
+
+class TestConvCatAgentMessagesToOai:
+
+    def test_assistant_without_content_gets_empty_string(self):
+        from cat_agent.llm.base.model import BaseChatModel
+
+        out = BaseChatModel._conv_cat_agent_messages_to_oai([
+            {'role': 'system', 'content': 'sys'},
+            {'role': 'user', 'content': 'hi'},
+            {'role': 'assistant'},  # missing content — previously caused Ollama 400
+        ])
+        assert out[-1]['role'] == 'assistant'
+        assert out[-1]['content'] == ''
+
+    def test_system_user_none_content_normalised(self):
+        from cat_agent.llm.base.model import BaseChatModel
+
+        out = BaseChatModel._conv_cat_agent_messages_to_oai([
+            {'role': 'system', 'content': None},
+            {'role': 'user'},
+        ])
+        assert out[0]['content'] == ''
+        assert out[1]['content'] == ''

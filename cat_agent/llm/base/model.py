@@ -221,7 +221,47 @@ class BaseChatModel(ABC):
         # Truncate if necessary
         max_input_tokens = generate_cfg.pop('max_input_tokens', DEFAULT_MAX_INPUT_TOKENS)
         if max_input_tokens > 0:
+            from cat_agent.utils.message_utils import extract_text_from_message
+            from cat_agent.utils.tokenization_qwen import count_tokens
+
+            before_count = len(messages)
+            before_tokens = sum(
+                count_tokens(extract_text_from_message(m, add_upload_info=False)) for m in messages)
             messages = truncate_input_messages_roughly(messages=messages, max_tokens=max_input_tokens)
+            after_count = len(messages)
+            after_tokens = sum(
+                count_tokens(extract_text_from_message(m, add_upload_info=False)) for m in messages)
+            if after_count < before_count or after_tokens < before_tokens:
+                from cat_agent.observability.context import get_run_context
+                from cat_agent.observability.emitter import emit
+                from cat_agent.observability.events import AgentEvent
+
+                ctx = get_run_context()
+                dropped = before_count - after_count
+                ratio = (before_tokens / max_input_tokens) if max_input_tokens else 0.0
+                if ctx is not None:
+                    ctx.metrics.truncation_events += 1
+                    ctx.metrics.max_context_ratio = max(ctx.metrics.max_context_ratio, ratio)
+                    emit(AgentEvent.context_truncated(
+                        trace_id=ctx.trace_id,
+                        run_id=ctx.run_id,
+                        span_id=ctx.span_id,
+                        parent_span_id=ctx.parent_span_id,
+                        agent_name=ctx.agent_name,
+                        agent_class=ctx.agent_class,
+                        before_tokens=before_tokens,
+                        after_tokens=after_tokens,
+                        max_input_tokens=max_input_tokens,
+                        dropped_messages=dropped,
+                    ))
+                else:
+                    logger.warning(
+                        'Input truncated: {}→{} tokens (max_input_tokens={}, dropped_messages={})',
+                        before_tokens,
+                        after_tokens,
+                        max_input_tokens,
+                        dropped,
+                    )
 
         # Determine function-calling mode
         fncall_mode = bool(functions)
@@ -396,10 +436,13 @@ class BaseChatModel(ABC):
         new_messages = []
         for msg in messages:
             if msg['role'] == ASSISTANT:
-                if new_messages[-1]['role'] != ASSISTANT:
-                    new_messages.append({'role': ASSISTANT})
+                if (not new_messages) or new_messages[-1]['role'] != ASSISTANT:
+                    # Always include content — Ollama/OpenAI reject missing/null content.
+                    new_messages.append({'role': ASSISTANT, 'content': ''})
                 if msg.get('content'):
                     new_messages[-1]['content'] = msg['content']
+                else:
+                    new_messages[-1].setdefault('content', '')
                 if msg.get('reasoning_content'):
                     new_messages[-1]['reasoning_content'] = msg['reasoning_content']
                 if msg.get('function_call'):
@@ -417,9 +460,14 @@ class BaseChatModel(ABC):
                 new_msg = copy.deepcopy(msg)
                 new_msg['role'] = 'tool'
                 new_msg['id'] = msg.get('extra', {}).get('function_id', '1')
+                if new_msg.get('content') is None:
+                    new_msg['content'] = ''
                 new_messages.append(new_msg)
             else:
-                new_messages.append(msg)
+                cleaned = dict(msg)
+                if cleaned.get('content') is None:
+                    cleaned['content'] = ''
+                new_messages.append(cleaned)
         return new_messages
 
     def quick_chat_oai(self, messages: List[dict], tools: Optional[list] = None) -> dict:
@@ -450,6 +498,7 @@ class BaseChatModel(ABC):
 
         def _to_oai(data):
             message = {'role': 'assistant', 'content': '', 'reasoning_content': '', 'tool_calls': []}
+            usage = None
             for item in data:
                 if item.get('reasoning_content'):
                     message['reasoning_content'] += item['reasoning_content']
@@ -462,9 +511,12 @@ class BaseChatModel(ABC):
                         'function': {'name': item['function_call']['name'],
                                      'arguments': item['function_call']['arguments']},
                     })
+                extra = item.get('extra') if hasattr(item, 'get') else getattr(item, 'extra', None)
+                if isinstance(extra, dict) and extra.get('usage'):
+                    usage = extra['usage']
             return {
                 'choices': [{'message': message}],
-                'usage': {'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0},
+                'usage': usage,
             }
 
         functions = [t['function'] for t in tools] if tools else None

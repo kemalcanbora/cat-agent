@@ -67,6 +67,45 @@ def main(argv: list[str] | None = None) -> int:
     audit_export_parser.add_argument('--path', required=True, help='Path to audit.jsonl')
     audit_export_parser.add_argument('--output', required=True, help='Destination JSONL file')
 
+    synth_parser = subparsers.add_parser(
+        'synth',
+        help='Tool synthesis intake (draft → interview → sandboxed tool)',
+    )
+    synth_sub = synth_parser.add_subparsers(dest='synth_command', required=True)
+
+    synth_init = synth_sub.add_parser(
+        'init',
+        help='Write a blank Markdown draft template',
+    )
+    synth_init.add_argument('name', help='Tool name used in the output filename')
+    synth_init.add_argument(
+        '--lang',
+        default='en',
+        help='Template language: en, de, fr, es, it, nl, tr (default: en)',
+    )
+    synth_init.add_argument(
+        '--output',
+        default=None,
+        help='Output path (default: ./<name>_draft.md)',
+    )
+
+    synth_run = synth_sub.add_parser(
+        'run',
+        help='Interview + synthesise a tool from a Markdown draft',
+    )
+    synth_run.add_argument('draft', help='Path to draft.md')
+    synth_run.add_argument('--locale', default=None, help='Override locale (e.g. de-DE)')
+    synth_run.add_argument(
+        '--lang',
+        default=None,
+        help='Override working language for questions (e.g. de)',
+    )
+    synth_run.add_argument(
+        '--output-dir',
+        default=None,
+        help='Workspace root for generated_tools/',
+    )
+
     args = parser.parse_args(argv)
     install_offline_guards()
 
@@ -110,7 +149,84 @@ def main(argv: list[str] | None = None) -> int:
         print(f'Exported {count} audit record(s) to {args.output}')
         return 0
 
+    if args.command == 'synth':
+        return _cmd_synth(args)
+
     return 1
+
+
+def _cmd_synth(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    if args.synth_command == 'init':
+        from cat_agent.synthesis.intake.template import write_template
+
+        out = Path(args.output) if args.output else Path(f'{args.name}_draft.md')
+        write_template(out, lang=args.lang)
+        print(f'Wrote draft template to {out} (lang={args.lang})')
+        return 0
+
+    if args.synth_command == 'run':
+        import os
+
+        if not (os.getenv('OLLAMA_API_KEY') or os.getenv('OPENAI_API_KEY')):
+            print(
+                'Missing OLLAMA_API_KEY or OPENAI_API_KEY — see .env.example.'
+            )
+            return 1
+
+        from cat_agent.synthesis.intake.pipeline import synthesize_from_draft
+
+        llm_cfg = _build_llm_cfg()
+        intake_cfg = dict(llm_cfg)
+        # Intake benefits from a stronger model when INTAKE_LLM_MODEL is set.
+        if os.getenv('INTAKE_LLM_MODEL'):
+            intake_cfg = dict(llm_cfg)
+            intake_cfg['model'] = os.getenv('INTAKE_LLM_MODEL')
+
+        result = synthesize_from_draft(
+            args.draft,
+            llm=llm_cfg,
+            intake_llm=intake_cfg,
+            locale=args.locale,
+            lang=args.lang,
+            output_dir=args.output_dir,
+        )
+        if result.synthesis and result.synthesis.artifact_dir:
+            print(f'artifacts: {result.synthesis.artifact_dir}')
+        if result.ok:
+            print(f'ok: {result.spec.registered_name if result.spec else "?"}')
+            return 0
+        print(f'failed: {result.error}')
+        return 1
+
+    return 1
+
+
+def _build_llm_cfg() -> dict:
+    import os
+
+    api_key = (
+        os.getenv('OLLAMA_API_KEY')
+        or os.getenv('OPENAI_API_KEY')
+        or 'EMPTY'
+    )
+    model = os.getenv('LLM_MODEL', 'minimax-m2.7:cloud')
+    base_url = (os.getenv('OLLAMA_BASE_URL') or 'https://ollama.com/v1').rstrip('/')
+    if not base_url.endswith('/v1'):
+        base_url = base_url + '/v1'
+    return {
+        'model': model,
+        'model_type': 'oai',
+        'model_server': base_url,
+        'api_key': api_key,
+        'generate_cfg': {
+            'temperature': 0.2,
+            'top_p': 0.8,
+            # Reasoning models need headroom; 1024 often yields empty content.
+            'max_tokens': 8192,
+        },
+    }
 
 
 if __name__ == '__main__':

@@ -1,4 +1,4 @@
-"""PhysicsGuy — async Assistant that can call multiple tools in one turn.
+"""PhysicsGirl — async Assistant that can call multiple tools in one turn.
 
 Uses local ``llama_cpp`` (same model as ``examples/llama_cpp_math_guy``). When the
 model emits several tool calls together, ``arun`` runs them concurrently.
@@ -81,10 +81,10 @@ async def main() -> None:
 
     bot = Assistant(
         llm=llm_cfg,
-        name='PhysicsGuy',
+        name='PhysicsGirl',
         description='Computes kinetic energy, potential energy, and rotation speeds.',
         system_message=(
-            'You are PhysicsGuy. Use the provided tools for every numeric answer. '
+            'You are PhysicsGirl. Use the provided tools for every numeric answer. '
             'When the user asks for several independent quantities, call multiple '
             'tools in one turn (parallel function calls). Then summarize briefly.'
         ),
@@ -103,7 +103,7 @@ async def main() -> None:
         }
     ]
 
-    print('\nRunning PhysicsGuy via arun_nonstream '
+    print('\nRunning PhysicsGirl via arun_nonstream '
           '(async path collects full turns; does not stream tokens)...\n')
     async with bot:
         result = await bot.arun_nonstream(messages)

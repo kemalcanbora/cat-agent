@@ -3,11 +3,9 @@
 Maps Cat-Agent's `run.* / node.* / llm.* / tool.*` event pairs onto OTel spans,
 preserving the parent/child nesting carried by each event's `span_id` and
 `parent_span_id`. With a configured OTel provider/exporter the result renders as
-a trace tree in standard viewers (Jaeger, Grafana Tempo) and as an agent graph
-in OpenInference-aware UIs such as Arize Phoenix.
-
-This follows the OTel GenAI semantic conventions where practical
-(`gen_ai.*` attributes) and adds `cat_agent.*` attributes for graph nodes.
+a trace tree in standard viewers (Jaeger, Grafana Tempo), as an agent graph in
+OpenInference-aware UIs such as Arize Phoenix, and with Input/Output/model in
+Langfuse (via ``langfuse.*`` + ``gen_ai.*`` attributes).
 
 Requires the OpenTelemetry SDK::
 
@@ -15,17 +13,11 @@ Requires the OpenTelemetry SDK::
 
 Typical setup (exporter configuration is left to the application)::
 
-    from opentelemetry import trace
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor
-    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+    from cat_agent.observability import OpenTelemetryHandler, with_langfuse
 
-    provider = TracerProvider()
-    provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
-    trace.set_tracer_provider(provider)
-
-    from cat_agent.observability import OpenTelemetryHandler
-    agent = MyGraph.compile(handlers=[OpenTelemetryHandler()])
+    @with_langfuse
+    def main():
+        agent = MyGraph.compile(handlers=[OpenTelemetryHandler()])
 """
 
 from __future__ import annotations
@@ -127,7 +119,25 @@ class OpenTelemetryHandler:
         }
         if 'duration_ms' in p:
             attrs['cat_agent.duration_ms'] = p['duration_ms']
-        if kind == 'node':
+
+        # Langfuse maps these attribute names to UI Input / Output fields.
+        if p.get('input') is not None:
+            attrs['langfuse.observation.input'] = p['input']
+            attrs['gen_ai.prompt'] = p['input']
+            attrs['input.value'] = p['input']
+        if p.get('output') is not None:
+            attrs['langfuse.observation.output'] = p['output']
+            attrs['gen_ai.completion'] = p['output']
+            attrs['output.value'] = p['output']
+
+        if kind == 'run':
+            attrs['gen_ai.operation.name'] = 'invoke_agent'
+            # Root span → Langfuse trace-level Input/Output.
+            if p.get('input') is not None:
+                attrs['langfuse.trace.input'] = p['input']
+            if p.get('output') is not None:
+                attrs['langfuse.trace.output'] = p['output']
+        elif kind == 'node':
             attrs['gen_ai.operation.name'] = 'chain'
             attrs['cat_agent.node'] = p.get('node')
             attrs['cat_agent.node_type'] = p.get('node_type')
@@ -135,7 +145,11 @@ class OpenTelemetryHandler:
             attrs['cat_agent.graph.step'] = p.get('step')
         elif kind == 'llm':
             attrs['gen_ai.operation.name'] = 'chat'
-            attrs['gen_ai.request.model'] = p.get('model')
+            model = p.get('model') or None
+            if model:
+                attrs['gen_ai.request.model'] = model
+                attrs['gen_ai.response.model'] = model
+                attrs['langfuse.observation.model.name'] = model
             usage = p.get('usage') or {}
             if isinstance(usage, dict):
                 if usage.get('prompt_tokens') is not None:
@@ -145,6 +159,10 @@ class OpenTelemetryHandler:
         elif kind == 'tool':
             attrs['gen_ai.operation.name'] = 'execute_tool'
             attrs['gen_ai.tool.name'] = p.get('tool_name')
+            if p.get('tool_args') is not None and p.get('input') is None:
+                # tool.start carries args; map them as observation input.
+                attrs['langfuse.observation.input'] = p['tool_args']
+                attrs['input.value'] = p['tool_args']
             if 'success' in p:
                 attrs['cat_agent.tool.success'] = p.get('success')
         return attrs

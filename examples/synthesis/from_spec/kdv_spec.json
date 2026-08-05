@@ -1,0 +1,53 @@
+{
+  "name": "split_kdv_inclusive",
+  "description": "Split a KDV-inclusive (tax-inclusive) gross amount into net and KDV tax given a rate. Round net and tax to 2 decimal places with half-up rounding so net + tax equals the gross (adjust tax by at most 0.01 if needed).",
+  "parameters": {
+    "gross": {
+      "type": "number",
+      "description": "Gross amount including KDV, in currency units"
+    },
+    "rate": {
+      "type": "number",
+      "description": "KDV rate as a fraction (e.g. 0.20 for %20, 0.0 for tax-free)"
+    }
+  },
+  "returns": "object",
+  "examples": [
+    {
+      "inputs": {"gross": 120.0, "rate": 0.20},
+      "expected": {"net": 100.0, "tax": 20.0},
+      "note": "classic 20% inclusive"
+    },
+    {
+      "inputs": {"gross": 100.0, "rate": 0.0},
+      "expected": {"net": 100.0, "tax": 0.0},
+      "note": "zero rate — all net"
+    },
+    {
+      "inputs": {"gross": 1.0, "rate": 0.20},
+      "expected": {"net": 0.83, "tax": 0.17},
+      "note": "small amount; half-cent boundary"
+    },
+    {
+      "inputs": {"gross": 10.0, "rate": 0.10},
+      "expected": {"net": 9.09, "tax": 0.91},
+      "note": "10% inclusive"
+    },
+    {
+      "inputs": {"gross": 99.99, "rate": 0.20},
+      "expected": {"net": 83.33, "tax": 16.66},
+      "note": "ambiguous rounding — pin net+tax == gross"
+    },
+    {
+      "inputs": {"gross": 250.0, "rate": 0.18},
+      "expected": {"net": 211.86, "tax": 38.14},
+      "note": "legacy 18% rate"
+    },
+    {
+      "inputs": {"gross": 0.01, "rate": 0.20},
+      "expected": {"net": 0.01, "tax": 0.0},
+      "note": "one kuruş; tax rounds to zero"
+    }
+  ],
+  "holdout_ratio": 0.3
+}

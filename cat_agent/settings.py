@@ -21,6 +21,10 @@ load_env_file()
 # Settings for LLMs
 DEFAULT_MAX_INPUT_TOKENS: int = int(os.getenv(
     'CAT_AGENT_DEFAULT_MAX_INPUT_TOKENS', 58000))  # The LLM will truncate the input messages if they exceed this limit
+# Fraction of local prompt-token estimate below which we warn about silent server-side truncation
+# (e.g. Ollama num_ctx). 0.95 = 5% tokenizer tolerance.
+PROMPT_TRUNCATION_TOLERANCE: float = float(os.getenv(
+    'CAT_AGENT_PROMPT_TRUNCATION_TOLERANCE', '0.95'))
 
 # Settings for agents
 MAX_LLM_CALL_PER_RUN: int = int(os.getenv('CAT_AGENT_MAX_LLM_CALL_PER_RUN', 20))

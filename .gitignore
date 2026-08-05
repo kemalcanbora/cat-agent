@@ -56,3 +56,4 @@ target/
 
 # Generated graph DAG diagrams from examples
 *.mmd
+examples/rand/

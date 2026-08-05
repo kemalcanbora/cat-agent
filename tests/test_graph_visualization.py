@@ -107,6 +107,60 @@ class TestOpenTelemetryHandler:
         node_span = next(s for s in spans if s.name == "node classify")
         assert node_span.context.trace_id == run_span.context.trace_id
 
+        # Langfuse Input / Output attributes on the root run span
+        assert run_span.attributes.get("langfuse.observation.input")
+        assert "6 * 7" in run_span.attributes.get("langfuse.observation.input")
+        assert run_span.attributes.get("langfuse.observation.output")
+        assert run_span.attributes.get("langfuse.trace.input")
+        assert run_span.attributes.get("langfuse.trace.output")
+
+    def test_llm_span_carries_model_and_io(self):
+        pytest.importorskip("opentelemetry.sdk")
+        from cat_agent.agent import BasicAgent
+        from cat_agent.llm.schema import ASSISTANT, Message
+        from unittest.mock import MagicMock
+
+        provider, exporter = self._provider_with_memory_exporter()
+        tracer = provider.get_tracer("test")
+        llm = MagicMock()
+        llm.model = "demo-model-7b"
+        llm.chat.return_value = iter([[Message(role=ASSISTANT, content="hi there")]])
+        agent = BasicAgent(llm=llm, name="Bot", handlers=[OpenTelemetryHandler(tracer=tracer)])
+        list(agent.run([Message(role="user", content="hello")]))
+
+        spans = exporter.get_finished_spans()
+        llm_span = next(s for s in spans if s.name.startswith("llm "))
+        assert llm_span.attributes.get("gen_ai.request.model") == "demo-model-7b"
+        assert llm_span.attributes.get("langfuse.observation.model.name") == "demo-model-7b"
+        assert "hello" in llm_span.attributes.get("langfuse.observation.input", "")
+        assert "hi there" in llm_span.attributes.get("langfuse.observation.output", "")
+
+    def test_llm_span_tool_call_output_not_empty(self):
+        pytest.importorskip("opentelemetry.sdk")
+        from cat_agent.agent import BasicAgent
+        from cat_agent.llm.schema import ASSISTANT, FunctionCall, Message
+        from unittest.mock import MagicMock
+
+        provider, exporter = self._provider_with_memory_exporter()
+        tracer = provider.get_tracer("test")
+        llm = MagicMock()
+        llm.model = "demo-model-7b"
+        llm.chat.return_value = iter([
+            [Message(
+                role=ASSISTANT,
+                content='',
+                function_call=FunctionCall(name='my_tool', arguments='{"x": 1}'),
+            )],
+        ])
+        agent = BasicAgent(llm=llm, name='Bot', handlers=[OpenTelemetryHandler(tracer=tracer)])
+        list(agent.run([Message(role='user', content='go')]))
+
+        spans = exporter.get_finished_spans()
+        llm_span = next(s for s in spans if s.name.startswith('llm '))
+        output = llm_span.attributes.get('langfuse.observation.output', '')
+        assert output
+        assert 'tool_call my_tool' in output
+
     def test_requires_opentelemetry(self, monkeypatch):
         # Simulate the package being absent.
         import builtins

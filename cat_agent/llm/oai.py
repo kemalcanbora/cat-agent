@@ -11,7 +11,6 @@
 # limitations under the License.
 
 import copy
-import logging
 import os
 import threading
 from pprint import pformat
@@ -23,13 +22,38 @@ from cat_agent.utils.utils import format_as_text_message
 
 if openai.__version__.startswith('0.'):
     from openai.error import OpenAIError  # noqa
+    BadRequestError = OpenAIError  # type: ignore[misc, assignment]
 else:
     from openai import OpenAIError
+    try:
+        from openai import BadRequestError
+    except ImportError:  # pragma: no cover
+        BadRequestError = OpenAIError  # type: ignore[misc, assignment]
 
 from cat_agent.llm.base import ModelServiceError, register_llm
 from cat_agent.llm.function_calling import BaseFnCallModel
 from cat_agent.llm.schema import ASSISTANT, FunctionCall, Message
 from cat_agent.log import logger
+
+
+def _merge_usage(msg: Message, usage) -> None:
+    if usage is None:
+        return
+    if isinstance(usage, dict):
+        prompt = usage.get('prompt_tokens', 0) or 0
+        completion = usage.get('completion_tokens', 0) or 0
+        total = usage.get('total_tokens', 0) or 0
+    else:
+        prompt = getattr(usage, 'prompt_tokens', 0) or 0
+        completion = getattr(usage, 'completion_tokens', 0) or 0
+        total = getattr(usage, 'total_tokens', 0) or 0
+    extra = dict(msg.extra or {})
+    extra['usage'] = {
+        'prompt_tokens': prompt,
+        'completion_tokens': completion,
+        'total_tokens': total,
+    }
+    msg.extra = extra
 
 
 @register_llm('oai')
@@ -53,6 +77,8 @@ class TextChatAtOAI(BaseFnCallModel):
         self._async_client_lock = threading.Lock()
         self._api_kwargs: Dict = {}
         self._thread_local = threading.local()
+        # None = unknown; True/False after first probe. Avoids double requests once known.
+        self._supports_stream_options: Optional[bool] = None
 
         if openai.__version__.startswith('0.'):
             if api_base:
@@ -173,6 +199,34 @@ class TextChatAtOAI(BaseFnCallModel):
 
         return await asyncio.to_thread(_collect)
 
+    def _create_chat_stream(self, messages: List[dict], generate_cfg: dict):
+        """Create a streaming chat completion, with optional stream_options + fallback."""
+        cfg = dict(generate_cfg)
+        include_usage = cfg.pop('include_usage', True)
+        want_stream_options = bool(include_usage) and self._supports_stream_options is not False
+
+        def _create(*, with_stream_options: bool):
+            kwargs = dict(cfg)
+            if with_stream_options:
+                kwargs['stream_options'] = {'include_usage': True}
+            return self._chat_complete_create(
+                model=self.model, messages=messages, stream=True, **kwargs)
+
+        if not want_stream_options:
+            return _create(with_stream_options=False)
+
+        try:
+            response = _create(with_stream_options=True)
+            self._supports_stream_options = True
+            return response
+        except (BadRequestError, TypeError) as ex:
+            self._supports_stream_options = False
+            logger.debug(
+                'stream_options not supported by server ({}); retrying without it.',
+                ex,
+            )
+            return _create(with_stream_options=False)
+
     def _chat_stream(
         self,
         messages: List[Message],
@@ -182,7 +236,7 @@ class TextChatAtOAI(BaseFnCallModel):
         messages = self.convert_messages_to_dicts(messages)
         logger.debug(f'LLM Input generate_cfg: \n{generate_cfg}')
         try:
-            response = self._chat_complete_create(model=self.model, messages=messages, stream=True, **generate_cfg)
+            response = self._create_chat_stream(messages, generate_cfg)
             if delta_stream:
                 for chunk in response:
                     if chunk.choices:
@@ -199,40 +253,49 @@ class TextChatAtOAI(BaseFnCallModel):
                 full_response = ''
                 full_reasoning_content = ''
                 full_tool_calls = []
+                last_res: Optional[List[Message]] = None
+                captured_usage = None
                 for chunk in response:
-                    if chunk.choices:
-                        if hasattr(chunk.choices[0].delta,
-                                   'reasoning_content') and chunk.choices[0].delta.reasoning_content:
-                            full_reasoning_content += chunk.choices[0].delta.reasoning_content
-                        if hasattr(chunk.choices[0].delta, 'content') and chunk.choices[0].delta.content:
-                            full_response += chunk.choices[0].delta.content
-                        if hasattr(chunk.choices[0].delta, 'tool_calls') and chunk.choices[0].delta.tool_calls:
-                            for tc in chunk.choices[0].delta.tool_calls:
-                                if full_tool_calls and (not tc.id or
-                                                        tc.id == full_tool_calls[-1]['extra']['function_id']):
-                                    if tc.function.name:
-                                        full_tool_calls[-1].function_call['name'] += tc.function.name
-                                    if tc.function.arguments:
-                                        full_tool_calls[-1].function_call['arguments'] += tc.function.arguments
-                                else:
-                                    full_tool_calls.append(
-                                        Message(role=ASSISTANT,
-                                                content='',
-                                                function_call=FunctionCall(name=tc.function.name,
-                                                                           arguments=tc.function.arguments),
-                                                extra={'function_id': tc.id}))
+                    if getattr(chunk, 'usage', None):
+                        captured_usage = chunk.usage
+                    if not chunk.choices:
+                        continue
+                    if hasattr(chunk.choices[0].delta,
+                               'reasoning_content') and chunk.choices[0].delta.reasoning_content:
+                        full_reasoning_content += chunk.choices[0].delta.reasoning_content
+                    if hasattr(chunk.choices[0].delta, 'content') and chunk.choices[0].delta.content:
+                        full_response += chunk.choices[0].delta.content
+                    if hasattr(chunk.choices[0].delta, 'tool_calls') and chunk.choices[0].delta.tool_calls:
+                        for tc in chunk.choices[0].delta.tool_calls:
+                            if full_tool_calls and (not tc.id or
+                                                    tc.id == full_tool_calls[-1]['extra']['function_id']):
+                                if tc.function.name:
+                                    full_tool_calls[-1].function_call['name'] += tc.function.name
+                                if tc.function.arguments:
+                                    full_tool_calls[-1].function_call['arguments'] += tc.function.arguments
+                            else:
+                                full_tool_calls.append(
+                                    Message(role=ASSISTANT,
+                                            content='',
+                                            function_call=FunctionCall(name=tc.function.name,
+                                                                       arguments=tc.function.arguments),
+                                            extra={'function_id': tc.id}))
 
-                        res = []
-                        if full_reasoning_content:
-                            res.append(Message(role=ASSISTANT, content='', reasoning_content=full_reasoning_content))
-                        if full_response:
-                            res.append(Message(
-                                role=ASSISTANT,
-                                content=full_response,
-                            ))
-                        if full_tool_calls:
-                            res += full_tool_calls
-                        yield res
+                    res = []
+                    if full_reasoning_content:
+                        res.append(Message(role=ASSISTANT, content='', reasoning_content=full_reasoning_content))
+                    if full_response:
+                        res.append(Message(
+                            role=ASSISTANT,
+                            content=full_response,
+                        ))
+                    if full_tool_calls:
+                        res += full_tool_calls
+                    last_res = res
+                    yield res
+                if captured_usage and last_res:
+                    _merge_usage(last_res[-1], captured_usage)
+                    yield last_res
         except OpenAIError as ex:
             raise ModelServiceError(exception=ex)
 
@@ -245,13 +308,15 @@ class TextChatAtOAI(BaseFnCallModel):
         try:
             response = self._chat_complete_create(model=self.model, messages=messages, stream=False, **generate_cfg)
             if hasattr(response.choices[0].message, 'reasoning_content'):
-                return [
+                out = [
                     Message(role=ASSISTANT,
                             content=response.choices[0].message.content,
                             reasoning_content=response.choices[0].message.reasoning_content)
                 ]
             else:
-                return [Message(role=ASSISTANT, content=response.choices[0].message.content)]
+                out = [Message(role=ASSISTANT, content=response.choices[0].message.content)]
+            _merge_usage(out[-1], getattr(response, 'usage', None))
+            return out
         except OpenAIError as ex:
             raise ModelServiceError(exception=ex)
 

@@ -274,6 +274,8 @@ Everything runs fully offline — recall uses hash embeddings by default, or set
 
 | Command | Purpose |
 |---|---|
+| `synth init <name> [--lang en]` | Write a blank Markdown draft template |
+| `synth run <draft.md>` | Interview + synthesise a sandboxed tool from a draft |
 | `offline-check [--strict]` | Air-gap readiness report |
 | `fetch-runtime --output <dir>` | Copy WASM assets for offline transfer |
 | `encrypt-storage [--workspace <dir>]` | Encrypt plaintext caches and RAG indexes |
@@ -306,6 +308,7 @@ a local Rust toolchain.
 
 ### Features
 
+- **Tool synthesis** — Markdown draft → interview → sandboxed `@tool` (`cat_agent.synthesis`; needs `[wasm]`)
 - **Agent workflows** — `Agent`, `Assistant`, `ReActChat`, `FnCallAgent`, `DocQAAgent`, `GroupChat`, `Router`, and more
 - **Async runs** — `arun` / `arun_nonstream`; parallel tool calls via `asyncio.gather` (does not stream tokens)
 - **`@tool` decorator** — register plain sync/async functions as OpenAI-compatible tools
@@ -318,7 +321,7 @@ a local Rust toolchain.
 - **Rich tool set** — Doc parsing, RAG, MCP, storage, WASM sandbox; network tools (web search, image search) are opt-in
 - **Multiple LLM backends** — OpenAI-compatible APIs (base install); Transformers, LlamaCpp, MLX-LM, OpenVINO via optional extras
 - **Structured logging** — Loguru-powered logging with coloured console, JSON, and file rotation support
-- **Observability hooks** — Structured run/node/LLM/tool events with pluggable handlers (callbacks, print, loguru, Mermaid, OpenTelemetry)
+- **Observability hooks** — Structured run/node/LLM/tool events with pluggable handlers (callbacks, print, loguru, Mermaid, OpenTelemetry, Langfuse)
 
 ## Requirements
 
@@ -355,6 +358,7 @@ backends are optional extras. On zsh, quote extras:
   pip install 'cat-agent[python_executor]'    # Unsafe in-process Python executor
   pip install 'cat-agent[code_interpreter]'   # Docker/Jupyter code interpreter server
   pip install 'cat-agent[otel]'                 # OpenTelemetry export for graph/agent traces
+  pip install 'cat-agent[synthesis]'            # ToolSpec YAML helpers for tool synthesis
 ```
 
 ### Local test with the same install path as PyPI
@@ -644,6 +648,41 @@ Each event includes `trace_id`, `run_id`, `span_id`, agent name/class, and a typ
   python examples/observability/observability_example.py
 ```
 
+### Tool synthesis (draft → sandboxed `@tool`)
+
+Business users write a Markdown draft; Cat-Agent interviews for gaps, confirms in
+plain language, compiles an internal `ToolSpec`, and synthesises code that is
+**validated inside WASM**. Successful runs also write a task-named Assistant-ready
+`@tool` module with the logic inlined.
+
+```bash
+pip install 'cat-agent[wasm,synthesis]'
+# configure OLLAMA_API_KEY / LLM_MODEL in .env — see .env.example
+python3.10 -m cat_agent.cli synth init my_tool --lang en
+python3.10 -m cat_agent.cli synth run my_tool_draft.md
+# or:
+python3.10 examples/synthesis/from_draft/run_from_draft.py
+```
+
+Artifacts land under `workspace/generated_tools/<name>/` (`impl.py`, sandboxed
+`tool.py`, Assistant-ready `<name>.py`, `spec.json`, provenance). Load the
+sandboxed proxy with `load_generated_tools()` + `enable_optional_tools(...)`.
+
+Advanced / JSON path: `examples/synthesis/from_spec/`.
+
+### Langfuse (local Docker)
+
+Use `@with_langfuse` — it loads `LANGFUSE_*` / `OTEL_*` from `.env`, configures
+OTLP export, and flushes on exit. Attach `OpenTelemetryHandler` to the agent.
+
+```bash
+cd examples/langfuse && docker compose up -d
+cp examples/langfuse/.env.example examples/langfuse/.env
+pip install 'cat-agent[otel]'
+python examples/langfuse/langfuse_example.py
+# UI: demo@example.com / password1
+```
+
 ## LLM Backends
 
 | Backend | `model_type` | Description |
@@ -677,7 +716,8 @@ bot = Assistant(
 | `cat_agent.tools` | `@tool`, CodeInterpreter, WASMCodeInterpreter, Retrieval, DocParser, Storage, MCP, and more |
 | `cat_agent.memory` | Memory, RAG, and context utilities |
 | `cat_agent.log` | Loguru-based structured logging |
-| `cat_agent.observability` | Run/node/LLM/tool event hooks and handlers (incl. Mermaid, OpenTelemetry) |
+| `cat_agent.observability` | Run/node/LLM/tool event hooks and handlers (incl. Mermaid, OpenTelemetry, Langfuse) |
+| `cat_agent.synthesis` | ToolSpec → ToolSmith → sandboxed `@tool`; Markdown intake interview |
 | `cat_agent.settings` | Configuration via environment variables |
 | `cat_agent._native` | Rust extension: BM25, HNSW, PDF parser, Qwen tokenizer, chunking, truncation |
 | `native` | Rust source (maturin/PyO3); builds `cat_agent._native` |
@@ -700,6 +740,9 @@ bot = Assistant(
 | `examples/mcp_service/` | Expose an agent as an MCP server |
 | `examples/graph/` | DAG workflow (`StateGraph`) |
 | `examples/observability/` | Trace handlers |
+| `examples/langfuse/` | OpenTelemetry → local Langfuse UI |
+| `examples/synthesis/from_draft/` | Markdown draft → interview → sandboxed tool |
+| `examples/synthesis/from_spec/` | JSON/YAML ToolSpec → ToolSmith |
 | `examples/rag_keyword/` | Rust BM25 keyword search |
 | `examples/rag_vector/` | Native HNSW vector search |
 | `examples/rag_native/` | Chunking + vector + truncation pipeline |
@@ -712,8 +755,8 @@ Run any example from the repo root after installing the matching extras, e.g.
 
 ## Testing
 
-- **Test count:** 610+ test functions (`pytest`)
-- **Run tests:** `pytest` (install with `pip install -e ".[test,local,rag]"`)
+- **Test count:** 890+ test functions (`pytest`)
+- **Run tests:** `pytest` (install with `pip install -e ".[test,local,rag,otel,synthesis]"`)
 - **Report coverage:** `pytest --cov=cat_agent --cov-report=term`
 - **Native checks:** `cargo test --manifest-path native/Cargo.toml --no-default-features`
 - **BM25 benchmark:** `python benchmarks/benchmark_rag.py --chunks 1000 --queries 25`

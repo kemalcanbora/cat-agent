@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from cat_agent.observability.context import RedactConfig, RunContext, run_context
+from cat_agent.observability.context import RedactConfig, RunContext, RunMetrics, run_context
 from cat_agent.observability.emitter import clear_handlers, emit, register_handler, resolve_handlers
 from cat_agent.observability.events import AgentEvent, EventEnvelope
 from cat_agent.observability.handlers import (
@@ -15,6 +15,11 @@ from cat_agent.observability.handlers import (
     MermaidExporter,
     OpenTelemetryHandler,
     PrintHandler,
+)
+from cat_agent.observability.langfuse import (
+    configure_langfuse_otel,
+    flush_langfuse_otel,
+    with_langfuse,
 )
 
 __all__ = [
@@ -29,11 +34,15 @@ __all__ = [
     'PrintHandler',
     'RedactConfig',
     'RunContext',
+    'RunMetrics',
     'clear_handlers',
+    'configure_langfuse_otel',
     'emit',
+    'flush_langfuse_otel',
     'register_handler',
     'resolve_handlers',
     'run_context',
+    'with_langfuse',
 ]
 
 if os.environ.get('CAT_AGENT_TRACE'):

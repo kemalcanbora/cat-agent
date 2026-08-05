@@ -39,6 +39,7 @@ load_dotenv(REPO_ROOT / '.env', override=True)
 from cat_agent.agents import Assistant, GroupChat
 from cat_agent.llm.schema import ASSISTANT, FUNCTION, Message
 from cat_agent.multi_agent import Blackboard, HubEvent
+from cat_agent.observability import PrintHandler
 from cat_agent.tools import tool
 
 EARTH_RADIUS_M = 6_378_137.0
@@ -81,7 +82,7 @@ def build_llm_cfg() -> Dict:
         or os.getenv('OPENAI_API_KEY')
         or 'EMPTY'
     )
-    model = os.getenv('LLM_MODEL', 'minimax-m2.5:cloud')
+    model = os.getenv('LLM_MODEL', 'minimax-m2.7:cloud')
     base_url = (os.getenv('OLLAMA_BASE_URL') or 'https://ollama.com/v1').rstrip('/')
     if not base_url.endswith('/v1'):
         base_url = base_url + '/v1'
@@ -196,7 +197,11 @@ def main() -> None:
     print('---')
 
     transcript: List[Message] = []
-    for batch in team.run(messages=messages, max_round=3):
+    for batch in team.run(
+        messages=messages,
+        max_round=3,
+        handlers=[PrintHandler()],
+    ):
         transcript = batch
 
     print()

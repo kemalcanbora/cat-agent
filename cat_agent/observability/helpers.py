@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any, List, Optional, Union
 
 from cat_agent.llm.schema import Message
@@ -10,9 +11,19 @@ from cat_agent.observability.context import RunContext
 
 
 def agent_model_name(llm: Any) -> Optional[str]:
+    """Best-effort model id for traces (OpenAI id, GGUF filename, HF repo, …)."""
     if llm is None:
         return None
-    return getattr(llm, 'model', None)
+    model = getattr(llm, 'model', None)
+    if isinstance(model, str) and model.strip():
+        return model.strip()
+    for attr in ('model_id', 'model_path', 'repo_id', 'filename'):
+        value = getattr(llm, attr, None)
+        if isinstance(value, str) and value.strip():
+            if attr == 'model_path':
+                return os.path.basename(value.strip())
+            return value.strip()
+    return None
 
 
 def format_tool_args(tool_args: Union[str, dict], ctx: Optional[RunContext]) -> str:
@@ -48,6 +59,139 @@ def truncate_result_preview(result: Any, ctx: Optional[RunContext]) -> str:
     if len(text) <= limit:
         return text
     return text[:limit] + '...'
+
+
+def format_obs_io(value: Any, ctx: Optional[RunContext]) -> Optional[str]:
+    """Serialize messages/content for Langfuse Input/Output (and similar UIs)."""
+    if value is None:
+        return None
+    if ctx and ctx.redact.redact_messages:
+        return '<redacted>'
+
+    if isinstance(value, list):
+        simplified = []
+        for item in value:
+            if isinstance(item, Message):
+                entry: dict = {'role': item.role, 'content': item.content}
+                if item.name:
+                    entry['name'] = item.name
+                if item.function_call is not None:
+                    entry['function_call'] = item.function_call.model_dump()
+                if getattr(item, 'reasoning_content', None):
+                    entry['reasoning_content'] = item.reasoning_content
+                simplified.append(entry)
+            elif isinstance(item, dict):
+                entry = {'role': item.get('role'), 'content': item.get('content')}
+                if item.get('name'):
+                    entry['name'] = item['name']
+                if item.get('function_call'):
+                    entry['function_call'] = item['function_call']
+                if item.get('reasoning_content'):
+                    entry['reasoning_content'] = item['reasoning_content']
+                simplified.append(entry)
+            else:
+                simplified.append(item)
+        text = json.dumps(simplified, ensure_ascii=False, default=str)
+    elif isinstance(value, str):
+        text = value
+    else:
+        text = json.dumps(value, ensure_ascii=False, default=str)
+
+    limit = ctx.redact.max_result_chars if ctx else 2000
+    if len(text) > limit:
+        return text[:limit] + '...'
+    return text
+
+
+def _message_field(msg: Any, key: str, default: Any = None) -> Any:
+    if isinstance(msg, dict):
+        return msg.get(key, default)
+    return getattr(msg, key, default)
+
+
+def _text_content(content: Any) -> str:
+    if content is None:
+        return ''
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict) and item.get('text'):
+                parts.append(str(item['text']))
+            elif hasattr(item, 'text') and item.text:
+                parts.append(str(item.text))
+        return '\n'.join(parts).strip()
+    return str(content).strip()
+
+
+def format_llm_obs_output(messages: Any, ctx: Optional[RunContext] = None) -> Optional[str]:
+    """Plain-text LLM output for Langfuse (tool calls + reasoning, not just content)."""
+    if not messages:
+        return None
+    if ctx and ctx.redact.redact_messages:
+        return '<redacted>'
+
+    parts: list[str] = []
+    items = messages if isinstance(messages, list) else [messages]
+    for msg in items:
+        role = _message_field(msg, 'role')
+        if role != 'assistant':
+            continue
+        reasoning = _text_content(_message_field(msg, 'reasoning_content'))
+        if reasoning:
+            parts.append(reasoning)
+        text = _text_content(_message_field(msg, 'content'))
+        if text:
+            parts.append(text)
+        fc = _message_field(msg, 'function_call')
+        if fc is not None:
+            if isinstance(fc, dict):
+                name = fc.get('name', '')
+                args = fc.get('arguments', '')
+            else:
+                name = getattr(fc, 'name', '')
+                args = getattr(fc, 'arguments', '')
+            parts.append(f'[tool_call {name}({args})]')
+
+    if parts:
+        text = '\n'.join(parts)
+        limit = ctx.redact.max_result_chars if ctx else 2000
+        if len(text) > limit:
+            return text[:limit] + '...'
+        return text
+    return format_obs_io(messages, ctx)
+
+
+def format_run_obs_output(messages: Any, ctx: Optional[RunContext] = None) -> Optional[str]:
+    """Summarize an agent run's new messages for Langfuse Output."""
+    if not messages:
+        return None
+    if ctx and ctx.redact.redact_messages:
+        return '<redacted>'
+
+    parts: list[str] = []
+    items = messages if isinstance(messages, list) else [messages]
+    for msg in items:
+        role = _message_field(msg, 'role')
+        name = _message_field(msg, 'name') or role
+        if role == 'assistant':
+            block = format_llm_obs_output([msg], ctx)
+            if block:
+                parts.append(f'{name}: {block}')
+        elif role == 'function':
+            preview = _text_content(_message_field(msg, 'content'))
+            if preview:
+                tool = _message_field(msg, 'name') or 'tool'
+                parts.append(f'{tool}: {preview}')
+
+    if parts:
+        text = '\n\n'.join(parts)
+        limit = ctx.redact.max_result_chars if ctx else 2000
+        if len(text) > limit:
+            return text[:limit] + '...'
+        return text
+    return format_obs_io(messages, ctx)
 
 
 def messages_have_tool_call(messages: List[Message]) -> bool:
