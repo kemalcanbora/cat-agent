@@ -31,6 +31,13 @@ On-prem security platform for regulated sectors:
 - **SBOM** — CycloneDX bill of materials generated on each release
 - **CLI** — `cat-agent offline-check`, `synth`, `encrypt-storage`, `fetch-runtime`, and more
 
+### What's new in 0.9.0
+
+- **Tool synthesis** — Markdown draft → interview → WASM-validated `@tool` (`cat-agent synth`, `examples/synthesis/`)
+- **Assistant-ready artifact** — task-named `<name>.py` with logic inlined under `@tool` (plus sandboxed `tool.py` / `impl.py`)
+- **Langfuse** — `@with_langfuse` OTLP helpers and local Docker example (`examples/langfuse/`)
+- **Observability** — richer run metrics / truncation warnings; OTel handler improvements
+
 ### What's new in 0.8.1
 
 - **Tool retry** — opt-in per-tool retries with shared exponential backoff; attempts stay out of message history
