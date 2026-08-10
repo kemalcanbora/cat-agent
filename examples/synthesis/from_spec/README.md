@@ -9,6 +9,9 @@ spec.json  →  ToolSmith  →  generated_tools/<name>/
 
 Prefer [`../from_draft/`](../from_draft/) for business drafts.
 
+For group-scoped promote / demote / share → adopt (no LLM), see
+[`../deploy/`](../deploy/).
+
 ## Setup
 
 ```bash

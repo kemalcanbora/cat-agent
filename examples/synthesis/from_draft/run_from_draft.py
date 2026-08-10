@@ -6,7 +6,7 @@ Config from repo ``.env``::
     CAT_AGENT_OFFLINE=0
     OLLAMA_API_KEY=...
     LLM_MODEL=minimax-m2.5:cloud
-    OLLAMA_BASE_URL=https://ollama.com/v1
+    OLLAMA_API_BASE=https://ollama.com/v1
     # optional stronger model for intake:
     # INTAKE_LLM_MODEL=...
 
@@ -40,7 +40,7 @@ def build_llm_cfg(model: str | None = None) -> Dict:
         or 'EMPTY'
     )
     chosen = model or os.getenv('LLM_MODEL', 'minimax-m2.7:cloud')
-    base_url = (os.getenv('OLLAMA_BASE_URL') or 'https://ollama.com/v1').rstrip('/')
+    base_url = (os.getenv('OLLAMA_API_BASE') or 'https://ollama.com/v1').rstrip('/')
     if not base_url.endswith('/v1'):
         base_url = base_url + '/v1'
     return {

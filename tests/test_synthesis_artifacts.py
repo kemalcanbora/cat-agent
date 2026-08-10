@@ -9,8 +9,11 @@ from pathlib import Path
 import pytest
 
 from cat_agent.synthesis.artifacts import (
+    MANIFEST_SCHEMA_VERSION,
     build_assistant_tool_source,
     build_proxy_source,
+    normalize_manifest,
+    read_manifest,
     sha256_text,
     write_artifacts,
 )
@@ -95,6 +98,48 @@ class TestArtifacts:
         assert sha256_text(impl if impl.endswith('\n') else impl + '\n') == manifest['impl_sha256']
         payload = json.loads((out / 'spec.json').read_text(encoding='utf-8'))
         assert payload['name'] == spec.name
+
+    def test_verification_block_and_v1_back_compat(self, tmp_path: Path):
+        spec = _spec('artifact_verify_tool')
+        impl = _IMPL.replace('artifact_add_one', spec.function_name)
+        work, holdout = spec.split_examples()
+        verification = {
+            'code_mutation': {'killed': 10, 'total': 12, 'threshold': 0.8},
+            'input_sensitivity': [
+                {'param': 'iban', 'changed': 0, 'variants': 198},
+                {'param': 'iban', 'changed': 0, 'variants': 198},
+            ],
+            'spec_warnings': [
+                {'code': 'negatives_far_from_positives', 'severity': 'warn'},
+            ],
+            'warnings_overridden': False,
+            'holdout_size': len(holdout),
+        }
+        out = write_artifacts(
+            spec=spec,
+            code=impl,
+            executor_name='wasm',
+            model_name='test-model',
+            attempt_count=1,
+            example_results=[],
+            work=work,
+            holdout=holdout,
+            base=str(tmp_path),
+            provenance={'verification': verification},
+        )
+        manifest = read_manifest(out)
+        assert manifest['schema_version'] == MANIFEST_SCHEMA_VERSION
+        assert manifest['verification'] == verification
+
+        # v1 manifests without verification still load.
+        legacy = {
+            'spec_hash': 'x',
+            'impl_sha256': 'y',
+            'registered_name': spec.registered_name,
+        }
+        normalised = normalize_manifest(legacy)
+        assert normalised['schema_version'] == 1
+        assert normalised['verification'] is None
 
     def test_writes_spec_json_without_pyyaml(self, tmp_path: Path, monkeypatch):
         real_import = builtins.__import__

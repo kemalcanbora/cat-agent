@@ -53,3 +53,19 @@ on-prem OpenAI-compatible endpoint via `OPENAI_BASE_URL` in `deploy/.env`.
 Set `CAT_AGENT_OFFLINE_ALLOW_HOSTS` to permit internal LLM gateways while
 `CAT_AGENT_OFFLINE=1` blocks the public internet. Docker Compose and
 Cat-Agent both read this `.env` file automatically.
+
+## Kubernetes CronJob (scheduled reports)
+
+Manifests under `deploy/k8s/` run the shared oneshot driver on a poll cadence
+(`*/15 * * * *`). Per-user cadence is stored in `jobs.next_run_at`, not in the
+CronJob schedule.
+
+```bash
+kubectl apply -f deploy/k8s/configmap.yaml
+kubectl apply -f deploy/k8s/cronjob.yaml
+```
+
+Requires `pip install 'cat-agent[scheduler]'` in the image and a PVC named
+`cat-agent-workspace` (or edit the volume claim). Replace Secret placeholders
+before applying to a real cluster.
+

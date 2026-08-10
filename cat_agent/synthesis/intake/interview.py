@@ -568,6 +568,54 @@ def holdout_question(failures: Sequence[Dict[str, Any]], lang: str = 'en') -> Qu
     return Question(text=text, kind='holdout', priority=0, meta={'failures': list(failures)})
 
 
+def insensitivity_question(
+    finding: Any,
+    lang: str = 'en',
+) -> Question:
+    """Ask whether input-space insensitivity is intentional (A4-class gaps)."""
+    tried = getattr(finding, 'variants_tried', 0)
+    samples = list(getattr(finding, 'sample_unchanged', []) or [])[:3]
+    param = getattr(finding, 'param', '?')
+    templates = {
+        'en': (
+            f'Changed one character of a valid example {tried} times; '
+            f'the output never changed (parameter {param!r}). '
+            f'Is that intended? If not, add one of these as a negative example: '
+            f'{samples!r}. {QUESTION_HINT}'
+        ),
+        'de': (
+            f'Ein Zeichen eines gültigen Beispiels wurde {tried}-mal geändert; '
+            f'die Ausgabe blieb gleich (Parameter {param!r}). '
+            f'Ist das beabsichtigt? Falls nicht, fügen Sie eines davon als '
+            f'Negativbeispiel hinzu: {samples!r}. {QUESTION_HINT}'
+        ),
+        'fr': (
+            f'Un caractère d\'un exemple valide a été modifié {tried} fois ; '
+            f'la sortie n\'a jamais changé (paramètre {param!r}). '
+            f'Est-ce voulu ? Sinon, ajoutez l\'un de ceux-ci en exemple négatif : '
+            f'{samples!r}. {QUESTION_HINT}'
+        ),
+        'tr': (
+            f'Geçerli bir örneğin bir karakteri {tried} kez değiştirildi; '
+            f'çıktı hiç değişmedi (parametre {param!r}). '
+            f'Bu istenen davranış mı? Değilse şunlardan birini negatif örnek '
+            f'olarak ekleyin: {samples!r}. {QUESTION_HINT}'
+        ),
+    }
+    text = templates.get(lang, templates['en'])
+    return Question(
+        text=text,
+        kind='insensitivity',
+        priority=0,
+        meta={
+            'param': param,
+            'variants_tried': tried,
+            'sample_unchanged': samples,
+            'base_inputs': dict(getattr(finding, 'base_inputs', {}) or {}),
+        },
+    )
+
+
 def _draft_settles_rounding(text: str) -> bool:
     """True when the draft already chooses a rounding rule (not merely mentions it)."""
     low = (text or '').lower()

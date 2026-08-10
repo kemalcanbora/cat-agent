@@ -103,7 +103,7 @@ Return x + 1.
     spec = _spec(name)
     calls = {'n': 0}
 
-    def synthesize(self, s, *, provenance=None):
+    def synthesize(self, s, *, provenance=None, principal=None):
         calls['n'] += 1
         if calls['n'] == 1:
             return _holdout_result(s, ok=False)
@@ -115,6 +115,8 @@ Return x + 1.
         kinds.append(q.kind)
         if q.kind == 'confirm':
             return 'yes'
+        if q.kind == 'insensitivity':
+            return 'skip'
         assert '10' in q.text or '999' in q.text or '11' in q.text
         return '11'
 
@@ -134,7 +136,7 @@ Return x + 1.
     assert 'holdout' in kinds
     assert result.holdout_rounds == 1
     assert result.ok
-    assert calls['n'] == 2
+    assert calls['n'] >= 2
     assert any(
         ex.inputs == {'x': 10} for ex in (result.spec.examples if result.spec else [])
     )
@@ -171,14 +173,18 @@ Return x + 1.
         compile_payload,
     ])
 
-    def synthesize(self, s, *, provenance=None):
+    def synthesize(self, s, *, provenance=None, principal=None):
         return _holdout_result(s, ok=False)
 
     kinds: List[str] = []
 
     def ask(q: Question) -> str:
         kinds.append(q.kind)
-        return 'yes' if q.kind == 'confirm' else '11'
+        if q.kind == 'confirm':
+            return 'yes'
+        if q.kind == 'insensitivity':
+            return 'skip'
+        return '11'
 
     with patch('cat_agent.synthesis.intake.pipeline.ToolSmith.synthesize', synthesize):
         with patch(

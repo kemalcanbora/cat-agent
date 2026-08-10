@@ -21,6 +21,7 @@ from cat_agent.synthesis.intake.interview import (
 from cat_agent.synthesis.artifacts import coerce_spec_type
 from cat_agent.synthesis.llm_text import collect_chat_text
 from cat_agent.synthesis.spec import Example, tool_spec_from_dict
+from cat_agent.synthesis.spec_quality import SpecWarning, lint_spec
 from cat_agent.utils.utils import extract_code
 
 _CHAR_MAP = str.maketrans({
@@ -56,6 +57,7 @@ class CompileResult:
     failed_field: Optional[str] = None
     model_added_examples: List[Example] = field(default_factory=list)
     used_draft_fallback: bool = False
+    warnings: List[SpecWarning] = field(default_factory=list)
 
 
 def sanitise_name(raw: str) -> Tuple[str, bool]:
@@ -270,6 +272,13 @@ def compile_to_spec(
             used_draft_fallback=used_fallback,
         )
 
+    warnings = lint_spec(spec)
+    for warning in warnings:
+        if warning.severity == 'warn':
+            logger.warning('spec_quality [{}]: {}', warning.code, warning.message)
+        else:
+            logger.info('spec_quality [{}]: {}', warning.code, warning.message)
+
     return CompileResult(
         spec=spec,
         ok=True,
@@ -278,6 +287,7 @@ def compile_to_spec(
         sanitised_name=name,
         model_added_examples=model_added,
         used_draft_fallback=used_fallback,
+        warnings=warnings,
     )
 
 

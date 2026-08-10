@@ -1,0 +1,244 @@
+job "{{ job_id }}" {
+  datacenters = [{% for dc in datacenters %}"{{ dc }}"{% if not loop.last %}, {% endif %}{% endfor %}]
+  namespace   = "{{ namespace }}"
+  type        = "service"
+
+  meta {
+    managed_by   = "cat-agent"
+    team         = "{{ team }}"
+    agent        = "{{ agent }}"
+    trigger      = "{{ trigger }}"
+    jobs_mode    = "{{ jobs_mode }}"
+    image_tag    = "{{ image_tag }}"
+    manifest_sha = "{{ manifest_sha }}"
+    deployed_by  = "{{ deployed_by }}"
+    deployed_at  = "{{ deployed_at }}"
+  }
+
+  update {
+    max_parallel      = 1
+    min_healthy_time  = "10s"
+    healthy_deadline  = "5m"
+    progress_deadline = "{{ progress_deadline }}"
+    auto_revert       = true
+  }
+
+  reschedule {
+    delay          = "30s"
+    delay_function = "exponential"
+    max_delay      = "1h"
+    unlimited      = true
+  }
+
+  group "agent" {
+    count = {{ count }}
+
+    network {
+{% if docker_network %}
+      # DOCKER DESKTOP / macOS ONLY: join a user Docker network. Bridge CNI needs
+      # host netns mounts Docker Desktop cannot provide. On Linux: omit
+      # docker_network in platform config so this branch uses mode = "bridge".
+      port "http" {
+        to = 8080
+      }
+{% else %}
+      mode = "bridge"
+      port "http" {
+        to = 8080
+      }
+{% endif %}
+    }
+
+    restart {
+      attempts = 2
+      mode     = "fail"
+    }
+
+{% if not docker_network %}
+    service {
+      name     = "{{ job_id }}"
+      port     = "http"
+      provider = "consul"
+      # Traefik (Consul Catalog): Host from platform.ingress_host_template
+      # (default {team}-{name}.localhost). Match public_url_template for humans.
+      tags = [
+        "traefik.enable=true",
+        "traefik.http.routers.{{ job_id }}.rule=Host(`{{ ingress_host }}`)",
+        "traefik.http.routers.{{ job_id }}.entrypoints=web",
+        "traefik.http.services.{{ job_id }}.loadbalancer.server.port=8080",
+      ]
+
+      check {
+        name     = "healthz"
+        type     = "http"
+        path     = "/healthz"
+        interval = "10s"
+        timeout  = "2s"
+      }
+
+      check {
+        name     = "readyz"
+        type     = "http"
+        path     = "/readyz"
+        interval = "15s"
+        timeout  = "3s"
+        check_restart {
+          limit = 3
+          grace = "30s"
+        }
+      }
+    }
+
+{% endif %}
+    task "agent" {
+      driver = "docker"
+
+      config {
+        image = "{{ image_ref }}"
+        # force_pull must stay false (Nomad default). With registry=local the
+        # image exists only on the host Docker daemon shared with this client;
+        # force_pull=true would try to pull a tag that exists nowhere. With a
+        # remote registry and content-addressed tags the image is pulled once;
+        # forcing a pull every restart only adds latency and a failure mode.
+{% if not is_local_registry %}
+        # Pull creds from Vault (secret …/registry/pull) — not an ephemeral
+        # password literal and not the host daemon ~/.docker/config.json.
+        auth {
+          username = "${REGISTRY_USER}"
+          password = "${REGISTRY_PASS}"
+        }
+{% endif %}
+{% if docker_network %}
+        # DOCKER DESKTOP / macOS ONLY: network_mode = compose network (no host
+        # port publish — Desktop cannot bind Nomad's advertise IP). Reach via
+        # shared Docker network + address_mode=driver (or Traefik on the host).
+        # On Linux: omit docker_network; use ports = ["http"] under bridge CNI.
+        network_mode = "{{ docker_network }}"
+{% if consul_dns %}
+        # DOCKER DESKTOP / macOS ONLY: pinned Consul DNS IP (compose). Resolve
+        # *.service.consul inside the alloc — Docker DNS alone cannot. On Linux:
+        # set consul_dns to the real Consul DNS address (not 10.32.0.2).
+        dns_servers = ["{{ consul_dns }}"]
+{% endif %}
+{% else %}
+        ports = ["http"]
+{% endif %}
+        readonly_rootfs = true
+        command = "cat-agent"
+        args = [
+          "serve",
+          "--factory", "{{ entrypoint }}",
+          "--host", "0.0.0.0",
+          "--port", "8080",
+        ]
+      }
+{% if docker_network %}
+
+      # Task-level service required for address_mode=driver (container IP on
+      # the shared Docker network is reachable from Consul).
+      service {
+        name         = "{{ job_id }}"
+        port         = "http"
+        provider     = "consul"
+        address_mode = "driver"
+        # Traefik (Consul Catalog): Host from platform.ingress_host_template
+        # (default {team}-{name}.localhost). Match public_url_template for humans.
+        tags = [
+          "traefik.enable=true",
+          "traefik.http.routers.{{ job_id }}.rule=Host(`{{ ingress_host }}`)",
+          "traefik.http.routers.{{ job_id }}.entrypoints=web",
+          "traefik.http.services.{{ job_id }}.loadbalancer.server.port=8080",
+        ]
+
+        check {
+          name         = "healthz"
+          type         = "http"
+          path         = "/healthz"
+          interval     = "10s"
+          timeout      = "2s"
+          address_mode = "driver"
+        }
+
+        check {
+          name         = "readyz"
+          type         = "http"
+          path         = "/readyz"
+          interval     = "15s"
+          timeout      = "3s"
+          address_mode = "driver"
+          check_restart {
+            limit = 3
+            grace = "30s"
+          }
+        }
+      }
+{% endif %}
+
+      resources {
+        cpu    = {{ cpu }}
+        memory = {{ memory }}
+      }
+
+      kill_timeout = "{{ kill_timeout }}s"
+
+      vault {
+        policies = [
+          "cat-agent-llm-{{ team }}",
+{% if not is_local_registry %}
+          "cat-agent-registry-pull",
+{% endif %}
+{% if has_secrets %}
+          "cat-agent-{{ team }}-{{ agent }}",
+{% endif %}
+        ]
+      }
+
+{% if not is_local_registry %}
+      # Registry pull account — never put REGISTRY_PASS in env {} below.
+      template {
+        destination = "secrets/registry.env"
+        env         = true
+        change_mode = "restart"
+        data = <<EOF
+REGISTRY_USER={{ '{{' }} with secret "{{ registry_pull_vault_path }}" {{ '}}' }}{{ '{{' }} .Data.data.username {{ '}}' }}{{ '{{' }} end {{ '}}' }}
+REGISTRY_PASS={{ '{{' }} with secret "{{ registry_pull_vault_path }}" {{ '}}' }}{{ '{{' }} .Data.data.password {{ '}}' }}{{ '{{' }} end {{ '}}' }}
+EOF
+      }
+{% endif %}
+      # Team LiteLLM virtual key — never put OPENAI_API_KEY in env {} below.
+      template {
+        destination = "secrets/llm.env"
+        env         = true
+        change_mode = "restart"
+        data = <<EOF
+OPENAI_API_KEY={{ '{{' }} with secret "{{ llm_team_vault_path }}" {{ '}}' }}{{ '{{' }} .Data.data.api_key {{ '}}' }}{{ '{{' }} end {{ '}}' }}
+EOF
+      }
+{% if has_secrets %}
+
+      template {
+        destination = "secrets/app.env"
+        env         = true
+        change_mode = "restart"
+        data = <<EOF
+{% for s in secrets %}
+{{ s }}={{ '{{' }} with secret "secret/data/cat-agent/{{ team }}/{{ agent }}" {{ '}}' }}{{ '{{' }} .Data.data.{{ s }} {{ '}}' }}{{ '{{' }} end {{ '}}' }}
+{% endfor %}
+EOF
+      }
+{% endif %}
+
+      env {
+{% for key, value in env.items() %}
+        {{ key }} = "{{ value }}"
+{% endfor %}
+        CAT_AGENT_LLM_MODEL = "{{ model_alias }}"
+        CAT_AGENT_MODEL_ALIAS = "{{ model_alias }}"
+        CAT_AGENT_MAX_CONCURRENCY = "{{ max_concurrency }}"
+        CAT_AGENT_MAX_QUEUE = "{{ max_queue }}"
+        CAT_AGENT_SHUTDOWN_TIMEOUT = "{{ shutdown_timeout }}"
+        CAT_AGENT_RUN_TIMEOUT = "{{ run_timeout }}"
+      }
+    }
+  }
+}

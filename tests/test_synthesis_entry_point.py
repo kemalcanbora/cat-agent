@@ -177,6 +177,7 @@ def split_vat(gross: float, rate: float) -> dict:
         executor=Exec(),
         max_attempts=2,
         output_dir=str(tmp_path),
+        mutation_enabled=False,
     )
     result = smith.synthesize(spec)
     assert result.ok, result.error
@@ -225,6 +226,12 @@ def test_smith_uses_reasoning_content_when_content_empty(tmp_path):
             assert f'def {function_name}' in code
             return ExecResult(ok=True, stdout='', stderr='', error=None, returned=inputs['x'] + 1)
 
-    smith = ToolSmith(llm=llm, executor=Exec(), max_attempts=2, output_dir=str(tmp_path))
+    smith = ToolSmith(
+        llm=llm,
+        executor=Exec(),
+        max_attempts=2,
+        output_dir=str(tmp_path),
+        mutation_enabled=False,
+    )
     result = smith.synthesize(spec)
     assert result.ok, result.error

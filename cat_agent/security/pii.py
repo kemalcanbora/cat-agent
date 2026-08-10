@@ -10,6 +10,7 @@ from typing import Any, Iterable, List, Optional, Union
 from cat_agent.llm.schema import CONTENT, Message
 
 PII_PLACEHOLDER = '[PII]'
+SECRET_PLACEHOLDER = '[REDACTED]'
 
 _EMAIL = re.compile(
     r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}',
@@ -26,12 +27,24 @@ _CREDIT_CARD = re.compile(
     r'\b(?:\d[ -]*?){13,19}\b',
 )
 _TURKISH_TC_ID = re.compile(r'\b[1-9]\d{10}\b')
+# Credential / provider-leak patterns (API keys, bearer tokens, query secrets)
+_AUTHORIZATION_HEADER = re.compile(
+    r'(?i)(authorization\s*[:=]\s*bearer\s+)\S+',
+)
+_OPENAI_SK = re.compile(r'\bsk-[A-Za-z0-9_\-]{8,}\b')
+_URL_SECRET_QUERY = re.compile(
+    r'([?&](?:token|api[_-]?key|access[_-]?token|key|secret)=)[^&\s"\']+',
+    re.IGNORECASE,
+)
 
 _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (_EMAIL, PII_PLACEHOLDER),
     (_IBAN, PII_PLACEHOLDER),
     (_CREDIT_CARD, PII_PLACEHOLDER),
     (_PHONE, PII_PLACEHOLDER),
+    (_AUTHORIZATION_HEADER, r'\1' + SECRET_PLACEHOLDER),
+    (_OPENAI_SK, SECRET_PLACEHOLDER),
+    (_URL_SECRET_QUERY, r'\1' + SECRET_PLACEHOLDER),
 )
 
 

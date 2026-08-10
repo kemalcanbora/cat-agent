@@ -1,0 +1,24 @@
+team: demo
+name: sum
+runtime:
+  entrypoint: sum_two_number:registry
+model:
+  type: api
+  alias: default
+trigger:
+  type: http
+  jobs: inline
+tools:
+  allow:
+    - sum_two_number
+resources:
+  cpu: 500
+  memory: 512
+  timeout: 300
+serve:
+  max_concurrency: 4
+  max_queue: 4
+  shutdown_timeout: 30
+scaling:
+  min: 1
+  max: 2

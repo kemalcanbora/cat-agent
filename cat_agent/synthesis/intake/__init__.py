@@ -10,12 +10,14 @@ from cat_agent.synthesis.intake.interview import (
     Question,
     SpecInterviewer,
     holdout_question,
+    insensitivity_question,
     is_affirmative,
     is_deferral,
     sanitize_messages_for_llm,
 )
 from cat_agent.synthesis.intake.pipeline import IntakeResult, synthesize_from_draft
 from cat_agent.synthesis.intake.template import TEMPLATES, get_template, write_template
+from cat_agent.synthesis.spec_quality import SpecWarning, lint_spec
 
 __all__ = [
     'CompileResult',
@@ -26,12 +28,15 @@ __all__ = [
     'Phase',
     'Question',
     'SpecInterviewer',
+    'SpecWarning',
     'TEMPLATES',
     'compile_to_spec',
     'get_template',
     'holdout_question',
+    'insensitivity_question',
     'is_affirmative',
     'is_deferral',
+    'lint_spec',
     'sanitize_messages_for_llm',
     'sanitise_name',
     'synthesize_from_draft',

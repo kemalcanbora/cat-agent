@@ -21,7 +21,7 @@ Configure the model in the repo `.env` (see `.env.example`):
 CAT_AGENT_OFFLINE=0
 OLLAMA_API_KEY=...
 LLM_MODEL=minimax-m2.5:cloud
-OLLAMA_BASE_URL=https://ollama.com/v1
+OLLAMA_API_BASE=https://ollama.com/v1
 # optional: stronger / more multilingual model for intake
 # INTAKE_LLM_MODEL=...
 ```
@@ -95,3 +95,6 @@ as repair feedback.
 
 For hand-authored JSON specs (tests / CI / other systems), see
 [../from_spec/](../from_spec/).
+
+For group-scoped promote / demote / share → adopt (no LLM), see
+[../deploy/](../deploy/).

@@ -1,0 +1,38 @@
+team: demo
+name: report-scheduler
+runtime:
+  entrypoint: schedule_agent:registry
+  python: "3.11"
+trigger:
+  type: http
+  jobs: inline
+model:
+  type: api
+  alias: minimax-m3
+tools:
+  allow:
+    - create_schedule
+    - list_schedules
+    - cancel_schedule
+resources:
+  cpu: 500
+  memory: 512
+  timeout: 300s
+scaling:
+  min: 1
+  max: 1
+serve:
+  max_concurrency: 2
+  max_queue: 4
+  shutdown_timeout: 30s
+env:
+  # Writable in Nomad Docker (readonly_rootfs). Use Postgres in prod:
+  # CAT_AGENT_SCHEDULER_DSN=postgresql+psycopg://...
+  CAT_AGENT_SCHEDULER_DSN: sqlite:////tmp/demo-report-scheduler.sqlite
+  # Default demo job (ReportScheduler.default_job → interval_seconds on Job row)
+  SCHEDULE_INTERVAL_SECONDS: "3600"
+  SCHEDULE_USER_ID: demo
+  SCHEDULE_TOPIC: AI news digest
+  SCHEDULE_CHANNEL: webhook
+  SCHEDULE_WEBHOOK: http://127.0.0.1:9999/hook
+  LOG_LEVEL: INFO

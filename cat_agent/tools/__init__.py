@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .base import TOOL_REGISTRY, BaseTool, enable_optional_tools
+from .base import TOOL_REGISTRY, BaseTool, disable_tools, enable_optional_tools
 from .code_interpreter import CodeInterpreter
 from .decorator import ToolArgumentError, tool
 from .doc_parser import DocParser
@@ -31,6 +31,7 @@ __all__ = [
     'CodeInterpreter',
     'TOOL_REGISTRY',
     'enable_optional_tools',
+    'disable_tools',
     'DocParser',
     'KeywordSearch',
     'Storage',

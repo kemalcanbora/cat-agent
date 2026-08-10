@@ -16,7 +16,12 @@ from cat_agent.synthesis.intake import (
     synthesize_from_draft,
     write_template,
 )
-from cat_agent.synthesis.registry import load_generated_tools, list_generated_tool_names
+from cat_agent.synthesis.registry import (
+    AdoptedToolError,
+    load_generated_tools,
+    list_generated_tool_names,
+    tools_for_principal,
+)
 from cat_agent.synthesis.smith import (
     AttemptRecord,
     Status,
@@ -32,6 +37,7 @@ from cat_agent.synthesis.spec import (
 )
 
 __all__ = [
+    'AdoptedToolError',
     'AttemptRecord',
     'Draft',
     'Example',
@@ -45,13 +51,26 @@ __all__ = [
     'ToolSmith',
     'ToolSpec',
     'WasmExecutor',
+    'demote',
     'generated_tools_root',
     'get_executor',
     'list_generated_tool_names',
     'load_generated_tools',
+    'tools_for_principal',
     'load_tool_spec',
+    'promote',
     'synthesize_from_draft',
     'tool_artifact_dir',
     'tool_spec_from_dict',
     'write_template',
 ]
+
+
+def __getattr__(name: str):
+    if name == 'promote':
+        from cat_agent.synthesis.promote import promote as _promote
+        return _promote
+    if name == 'demote':
+        from cat_agent.synthesis.promote import demote as _demote
+        return _demote
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

@@ -106,6 +106,7 @@ class TestToolSmith:
             executor=FakeExecutor('pass'),
             max_attempts=3,
             output_dir=str(tmp_path),
+            mutation_enabled=False,
         )
         result = smith.synthesize(spec)
         assert result.ok
@@ -143,6 +144,7 @@ def {spec.function_name}(x: int) -> int:
             executor=CodeAware(),
             max_attempts=5,
             output_dir=str(tmp_path),
+            mutation_enabled=False,
         )
         result = smith.synthesize(spec)
         assert result.ok
@@ -173,6 +175,7 @@ def {spec.function_name}(x: int) -> int:
             executor=AlwaysWrong(),
             max_attempts=3,
             output_dir=str(tmp_path),
+            mutation_enabled=False,
         )
         result = smith.synthesize(spec)
         assert result.ok is False
@@ -199,6 +202,7 @@ def {spec.function_name}(x: int) -> int:
             executor=HoldoutAware(),
             max_attempts=5,
             output_dir=str(tmp_path),
+            mutation_enabled=False,
         )
         result = smith.synthesize(spec)
         assert result.ok is False
@@ -250,6 +254,7 @@ def {spec.function_name}(x: int) -> int:
             executor=MatchExpected(),
             max_attempts=3,
             output_dir=str(tmp_path),
+            mutation_enabled=False,
         )
         result = smith.synthesize(spec)
         assert result.ok
@@ -298,6 +303,7 @@ def {spec.function_name}(x: int):
             executor=WasmExecutor(),
             max_attempts=3,
             output_dir=str(tmp_path),
+            mutation_enabled=False,
         )
         result = smith.synthesize(spec)
         assert result.ok

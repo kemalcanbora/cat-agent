@@ -91,7 +91,7 @@ def build_llm_cfg(*, model: str | None = None) -> Dict:
         or 'EMPTY'
     )
     resolved_model = model or os.getenv('LLM_MODEL', 'minimax-m2.5:cloud')
-    base_url = (os.getenv('OLLAMA_BASE_URL') or 'https://ollama.com/v1').rstrip('/')
+    base_url = (os.getenv('OLLAMA_API_BASE') or 'https://ollama.com/v1').rstrip('/')
     if not base_url.endswith('/v1'):
         base_url = base_url + '/v1'
     return {

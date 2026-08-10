@@ -15,6 +15,7 @@ from cat_agent.observability.context import get_run_context, run_context
 from cat_agent.observability.emitter import emit, resolve_handlers
 from cat_agent.observability.events import AgentEvent
 from cat_agent.observability.helpers import agent_model_name
+from cat_agent.settings import MUTATION_ENABLED, MUTATION_LIMIT, MUTATION_THRESHOLD
 from cat_agent.synthesis.artifacts import write_artifacts
 from cat_agent.synthesis.entry_point import (
     ensure_entry_point,
@@ -24,22 +25,33 @@ from cat_agent.synthesis.entry_point import (
 from cat_agent.synthesis.executors.base import ExecResult, SandboxExecutor
 from cat_agent.synthesis.harness import assert_json_serializable
 from cat_agent.synthesis.llm_text import collect_chat_text
+from cat_agent.synthesis.mutation import generate_mutants, measure_substitution_sensitivity
 from cat_agent.synthesis.overfit import check_overfit
 from cat_agent.synthesis.spec import Example, ToolSpec
 
 if TYPE_CHECKING:
     from cat_agent.observability.handlers.base import BaseHandler
+    from cat_agent.security.principal import Principal
 
 
 class Status(str, Enum):
     SUCCESS = 'success'
     EXHAUSTED = 'exhausted'
     HOLDOUT_FAILED = 'holdout_failed'
+    WEAK_SPEC = 'weak_spec'
 
 
 HOLDOUT_FAILED_MESSAGE = (
     'The generated code passed all supplied examples but failed an unseen case. '
     'Add this case to your spec and run again.'
+)
+
+WEAK_SPEC_MESSAGE = (
+    'Mutation testing found surviving mutants — the example set does not '
+    'discriminate enough to force a general solution. A survivor may be '
+    'semantically equivalent to the original (and therefore harmless); '
+    'inspect the listed diffs and add a discriminating example if the change '
+    'should have been caught.'
 )
 
 
@@ -55,6 +67,8 @@ class AttemptRecord:
     duration_ms: float = 0.0
     stage: str = 'work'
     example_results: List[Dict[str, Any]] = field(default_factory=list)
+    mutants_total: int = 0
+    mutants_killed: int = 0
 
 
 @dataclass
@@ -68,6 +82,8 @@ class SynthesisResult:
     registered_name: str
     error: Optional[str] = None
     holdout_failures: List[Dict[str, Any]] = field(default_factory=list)
+    surviving_mutants: List[str] = field(default_factory=list)
+    verification: Dict[str, Any] = field(default_factory=dict)
 
 
 class ToolSmith:
@@ -87,6 +103,9 @@ class ToolSmith:
         *,
         output_dir: Optional[str] = None,
         intake_llm: Union[dict, BaseChatModel, None] = None,
+        mutation_enabled: Optional[bool] = None,
+        mutation_limit: Optional[int] = None,
+        mutation_threshold: Optional[float] = None,
     ):
         if isinstance(llm, dict) or llm is None:
             self.llm = get_chat_model(llm or {})
@@ -100,12 +119,22 @@ class ToolSmith:
         self.max_attempts = max(1, int(max_attempts))
         self._handlers = handlers or []
         self.output_dir = output_dir
+        self.mutation_enabled = (
+            MUTATION_ENABLED if mutation_enabled is None else bool(mutation_enabled)
+        )
+        self.mutation_limit = max(
+            1, int(MUTATION_LIMIT if mutation_limit is None else mutation_limit)
+        )
+        self.mutation_threshold = float(
+            MUTATION_THRESHOLD if mutation_threshold is None else mutation_threshold
+        )
 
     def synthesize(
         self,
         spec: ToolSpec,
         *,
         provenance: Optional[Dict[str, Any]] = None,
+        principal: Optional['Principal'] = None,
     ) -> SynthesisResult:
         handlers = resolve_handlers(self._handlers, None)
         with run_context(
@@ -113,7 +142,9 @@ class ToolSmith:
             agent_class='ToolSmith',
             handlers=handlers,
         ) as ctx:
-            return self._synthesize_inner(spec, ctx, provenance=provenance)
+            return self._synthesize_inner(
+                spec, ctx, provenance=provenance, principal=principal,
+            )
 
     def _synthesize_inner(
         self,
@@ -121,6 +152,7 @@ class ToolSmith:
         ctx,
         *,
         provenance: Optional[Dict[str, Any]] = None,
+        principal: Optional['Principal'] = None,
     ) -> SynthesisResult:
         work, holdout = spec.split_examples()
         for example in list(work) + list(holdout):
@@ -222,6 +254,112 @@ class ToolSmith:
                     holdout_failures=failing,
                 )
 
+            # Mutation gate: tests the *examples*, not the code. Surviving
+            # mutants mean the spec is under-specified — terminate (do not
+            # feed back into the LLM retry loop).
+            all_examples = list(work) + list(holdout)
+            mut_stats = self._evaluate_mutants(spec, code, all_examples)
+            if mut_stats is not None:
+                score, total, killed, survivors = mut_stats
+                if score < self.mutation_threshold:
+                    msg = (
+                        f'{WEAK_SPEC_MESSAGE} '
+                        f'Score={killed}/{total} ({score:.0%}, '
+                        f'threshold={self.mutation_threshold:.0%}). '
+                        f'Survivor diffs: {survivors}'
+                    )
+                    record = AttemptRecord(
+                        attempt=attempt_no,
+                        code=code,
+                        work_passed=work_passed,
+                        holdout_passed=holdout_passed,
+                        error=msg,
+                        duration_ms=(time.perf_counter() - started) * 1000,
+                        stage='mutation',
+                        example_results=work_results + holdout_results,
+                        mutants_total=total,
+                        mutants_killed=killed,
+                    )
+                    attempts.append(record)
+                    self._emit_attempt(ctx, record)
+                    return SynthesisResult(
+                        ok=False,
+                        status=Status.WEAK_SPEC,
+                        spec=spec,
+                        code=code,
+                        artifact_dir=None,
+                        attempts=attempts,
+                        registered_name=spec.registered_name,
+                        error=msg,
+                        surviving_mutants=survivors,
+                        verification={
+                            'code_mutation': {
+                                'killed': killed,
+                                'total': total,
+                                'threshold': self.mutation_threshold,
+                            },
+                            'holdout_size': len(holdout),
+                        },
+                    )
+
+            # Input-sensitivity stats (advisory; recorded for the manifest).
+            def _runner(c: str, inputs: Dict[str, Any]) -> Any:
+                result = self.executor.run(
+                    c, inputs, deps=spec.deps or None,
+                    function_name=spec.function_name,
+                )
+                if not result.ok:
+                    raise RuntimeError(result.error or 'exec failed')
+                return result.returned
+
+            sensitivity_rows = measure_substitution_sensitivity(
+                code, all_examples, _runner,
+            )
+            if mut_stats is None:
+                code_mutation = {
+                    'killed': 0,
+                    'total': 0,
+                    'threshold': self.mutation_threshold,
+                    'skipped': True,
+                }
+                mut_killed, mut_total = 0, 0
+            else:
+                _, mut_total, mut_killed, _ = mut_stats
+                code_mutation = {
+                    'killed': mut_killed,
+                    'total': mut_total,
+                    'threshold': self.mutation_threshold,
+                }
+
+            warnings_raw = list((provenance or {}).get('spec_warnings') or [])
+            verification = {
+                'code_mutation': code_mutation,
+                'input_sensitivity': [
+                    {
+                        'param': row['param'],
+                        'changed': row['changed'],
+                        'variants': row['variants'],
+                    }
+                    for row in sensitivity_rows
+                ],
+                'spec_warnings': [
+                    {'code': w.get('code', ''), 'severity': w.get('severity', '')}
+                    for w in warnings_raw
+                    if isinstance(w, dict)
+                ],
+                'warnings_overridden': bool(
+                    (provenance or {}).get('warnings_overridden', False)
+                ),
+                'holdout_size': len(holdout),
+            }
+            if (provenance or {}).get('override_decision'):
+                verification['override_decision'] = (
+                    provenance or {}
+                ).get('override_decision')
+
+            merged_provenance = dict(provenance or {})
+            merged_provenance['verification'] = verification
+
             duration_ms = (time.perf_counter() - started) * 1000
             record = AttemptRecord(
                 attempt=attempt_no,
@@ -231,6 +369,8 @@ class ToolSmith:
                 duration_ms=duration_ms,
                 stage='success',
                 example_results=work_results + holdout_results,
+                mutants_total=mut_total,
+                mutants_killed=mut_killed,
             )
             attempts.append(record)
             self._emit_attempt(ctx, record)
@@ -245,7 +385,8 @@ class ToolSmith:
                 work=work,
                 holdout=holdout,
                 base=self.output_dir,
-                provenance=provenance,
+                provenance=merged_provenance,
+                principal=principal,
             )
             self._audit_created(spec, artifact_dir, attempt_no)
             return SynthesisResult(
@@ -256,6 +397,7 @@ class ToolSmith:
                 artifact_dir=str(artifact_dir),
                 attempts=attempts,
                 registered_name=spec.registered_name,
+                verification=verification,
             )
 
         err = (
@@ -273,6 +415,47 @@ class ToolSmith:
             registered_name=spec.registered_name,
             error=err,
         )
+
+    def _evaluate_mutants(
+        self,
+        spec: ToolSpec,
+        code: str,
+        examples: Sequence[Example],
+    ) -> Optional[tuple[float, int, int, List[str]]]:
+        """Return ``(score, total, killed, survivors)`` or ``None`` if skipped."""
+        if not self.mutation_enabled:
+            return None
+        mutants = generate_mutants(code, limit=self.mutation_limit)
+        if not mutants:
+            return None
+        killed = 0
+        survivors: List[str] = []
+        for mutant in mutants:
+            if self._mutant_killed(spec, mutant.code, examples):
+                killed += 1
+            else:
+                survivors.append(mutant.description)
+        total = len(mutants)
+        score = killed / total if total else 1.0
+        return (score, total, killed, survivors)
+
+    def _mutant_killed(
+        self,
+        spec: ToolSpec,
+        mutant_code: str,
+        examples: Sequence[Example],
+    ) -> bool:
+        """Return True if *mutant_code* fails any example (short-circuit)."""
+        for example in examples:
+            result: ExecResult = self.executor.run(
+                mutant_code,
+                example.inputs,
+                deps=spec.deps or None,
+                function_name=spec.function_name,
+            )
+            if not result.ok or result.returned != example.expected:
+                return True
+        return False
 
     def _run_examples(
         self,

@@ -93,18 +93,38 @@ pii = [
 synthesis = [
     "pyyaml>=6.0",
 ]
+platform = [
+    "jinja2>=3.1",
+    "pyyaml>=6.0",
+    "tomli>=2.0.0; python_version < '3.11'",
+    "import-linter>=2.0",
+]
+scheduler = [
+    "sqlalchemy>=2.0.0",
+    "apscheduler>=3.10.0,<4.0.0",
+]
+serve = [
+    "fastapi>=0.103.1",
+    "uvicorn>=0.23.2",
+    "httpx>=0.25.0",
+]
+email = [
+    "resend>=2.0.0",
+]
 test = [
     "pytest",
     "pytest-cov",
     "pytest-asyncio",
     "rank_bm25",
+    "cat-agent[scheduler,serve,platform]",
 ]
 all = [
-    "cat-agent[rag,mcp,otel,python_executor,code_interpreter,transformers,llama,wasm-bundled,mlx,synthesis]",
+    "cat-agent[rag,mcp,otel,python_executor,code_interpreter,transformers,llama,wasm-bundled,mlx,synthesis,scheduler,serve,email,platform]",
 ]
 
 [project.scripts]
 cat-agent = "cat_agent.cli:main"
+cat-agent-scheduler = "cat_agent.scheduling.drivers.oneshot:main"
 
 [project.urls]
 Homepage = "https://github.com/kemalcanbora/cat-agent"
@@ -134,6 +154,30 @@ readme = { file = "README.md", content-type = "text/markdown" }
     "tools/resource/docker_runtime/*.dockerfile",
     "tools/resource/wasm_runtime/bin/python-3.11.1.wasm",
     "tools/resource/wasm_runtime/usr/local/lib/python311.zip",
+    "platform/templates/*.tmpl",
+]
+
+[tool.importlinter]
+root_package = "cat_agent"
+
+[[tool.importlinter.contracts]]
+name = "Platform stays behind the platform extra"
+type = "forbidden"
+source_modules = [
+    "cat_agent.agent",
+    "cat_agent.agents",
+    "cat_agent.serve",
+    "cat_agent.tools",
+    "cat_agent.llm",
+    "cat_agent.security",
+    "cat_agent.scheduling",
+    "cat_agent.synthesis",
+    "cat_agent.memory",
+    "cat_agent.multi_agent",
+    "cat_agent.observability",
+]
+forbidden_modules = [
+    "cat_agent.platform",
 ]
 
 [tool.maturin]

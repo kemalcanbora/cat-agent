@@ -14,9 +14,15 @@ def load_env_file(*, path: str | Path | None = None) -> bool:
 
     Existing process environment variables are not overwritten.
     Returns True when a file was found and loaded.
+
+    When ``CAT_AGENT_MANAGED=1`` (set by Nomad job specs), dotenv is skipped
+    entirely so a stray ``.env`` in an image cannot override the gateway URL.
     """
     global _ENV_LOADED
     if _ENV_LOADED:
+        return False
+    if os.environ.get('CAT_AGENT_MANAGED', '').strip() in ('1', 'true', 'True', 'yes'):
+        _ENV_LOADED = True
         return False
 
     from dotenv import load_dotenv

@@ -1,0 +1,59 @@
+# CronJob schedule is the *polling* cadence only.
+# Per-user job cadence lives in jobs.next_run_at / interval_seconds / cron_expr
+# inside the scheduler DB — the two never need to match.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cat-agent-scheduler
+  labels:
+    app.kubernetes.io/name: cat-agent
+    app.kubernetes.io/component: scheduler
+spec:
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 900
+      template:
+        spec:
+          restartPolicy: Never
+          terminationGracePeriodSeconds: 60
+          containers:
+            - name: scheduler
+              image: cat-agent:on-prem
+              imagePullPolicy: IfNotPresent
+              command: ["cat-agent-scheduler"]
+              envFrom:
+                - configMapRef:
+                    name: cat-agent-scheduler
+                - secretRef:
+                    name: cat-agent-secrets
+                    optional: true
+              env:
+                - name: POD_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.name
+                - name: CAT_AGENT_SCHEDULER_DSN
+                  valueFrom:
+                    configMapKeyRef:
+                      name: cat-agent-scheduler
+                      key: CAT_AGENT_SCHEDULER_DSN
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: "256Mi"
+                limits:
+                  cpu: "1"
+                  memory: "1Gi"
+              volumeMounts:
+                - name: workspace
+                  mountPath: /data/workspace
+          volumes:
+            - name: workspace
+              persistentVolumeClaim:
+                claimName: cat-agent-workspace

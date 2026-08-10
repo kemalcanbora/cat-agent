@@ -8,12 +8,18 @@ import re
 import textwrap
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
 
 from cat_agent import __version__ as CAT_AGENT_VERSION
 from cat_agent.log import logger
 from cat_agent.settings import DEFAULT_WORKSPACE
 from cat_agent.synthesis.spec import Example, ParameterSpec, ToolSpec
+
+if TYPE_CHECKING:
+    from cat_agent.security.principal import Principal
+
+# Manifest schema: v1 = original; v2 adds optional ``verification`` block.
+MANIFEST_SCHEMA_VERSION = 2
 
 _TYPE_MAP = {
     'string': 'str',
@@ -33,11 +39,197 @@ _TYPE_MAP = {
 
 
 def generated_tools_root(base: Optional[str] = None) -> Path:
+    """Legacy flat layout ``<workspace>/generated_tools``. Prefer group artifacts."""
     root = Path(base or DEFAULT_WORKSPACE) / 'generated_tools'
     return root
 
 
-def tool_artifact_dir(spec: ToolSpec, base: Optional[str] = None) -> Path:
+def groups_root(base: Optional[str] = None) -> Path:
+    return Path(base or DEFAULT_WORKSPACE) / 'groups'
+
+
+def artifacts_root(principal: 'Principal', base: Optional[str] = None) -> Path:
+    """``<workspace>/groups/<group_id>/artifacts``."""
+    from cat_agent.security.principal import validate_group_id
+
+    validate_group_id(principal.group_id)
+    return groups_root(base) / principal.group_id / 'artifacts'
+
+
+def staging_pointers_path(principal: 'Principal', base: Optional[str] = None) -> Path:
+    return groups_root(base) / principal.group_id / 'staging.json'
+
+
+def active_pointers_path(principal: 'Principal', base: Optional[str] = None) -> Path:
+    return groups_root(base) / principal.group_id / 'active.json'
+
+
+def shares_path(principal: 'Principal', base: Optional[str] = None) -> Path:
+    return groups_root(base) / principal.group_id / 'shares.json'
+
+
+def shares_path_for_group(group_id: str, base: Optional[str] = None) -> Path:
+    from cat_agent.security.principal import validate_group_id
+
+    validate_group_id(group_id)
+    return groups_root(base) / group_id / 'shares.json'
+
+
+def adoptions_path(principal: 'Principal', base: Optional[str] = None) -> Path:
+    return groups_root(base) / principal.group_id / 'adoptions.json'
+
+
+def group_settings_path(principal: 'Principal', base: Optional[str] = None) -> Path:
+    return groups_root(base) / principal.group_id / 'settings.json'
+
+
+def group_settings_path_for(group_id: str, base: Optional[str] = None) -> Path:
+    from cat_agent.security.principal import validate_group_id
+
+    validate_group_id(group_id)
+    return groups_root(base) / group_id / 'settings.json'
+
+
+def artifact_version_dir(
+    principal: 'Principal',
+    tool_name: str,
+    version: str,
+    base: Optional[str] = None,
+) -> Path:
+    return artifacts_root(principal, base) / tool_name / version
+
+
+def artifact_version_dir_for_group(
+    group_id: str,
+    tool_name: str,
+    version: str,
+    base: Optional[str] = None,
+) -> Path:
+    from cat_agent.security.principal import validate_group_id
+
+    validate_group_id(group_id)
+    return groups_root(base) / group_id / 'artifacts' / tool_name / version
+
+
+ORG_SHARE_TARGET = 'org'
+
+
+def adopted_pointer_key(owner_group: str, tool_name: str) -> str:
+    from cat_agent.security.principal import validate_group_id
+
+    validate_group_id(owner_group)
+    return f'{owner_group}/{tool_name}'
+
+
+def parse_active_pointer_key(key: str) -> tuple:
+    """Return ``(owner_group_or_None, tool_name)`` for an active.json key.
+
+    Owned tools use bare names; adopted tools use ``owner/tool``.
+    """
+    if '/' not in key:
+        return None, key
+    owner, _, tool = key.partition('/')
+    if not owner or not tool or '/' in tool:
+        raise ValueError(f'Invalid active pointer key {key!r}')
+    return owner, tool
+
+
+def read_json_object(path: Path) -> Dict[str, Any]:
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding='utf-8'))
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return data
+
+
+def write_json_object(path: Path, data: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(data, indent=2, ensure_ascii=False, default=str) + '\n',
+        encoding='utf-8',
+    )
+
+
+def read_group_settings(group_id: str, base: Optional[str] = None) -> Dict[str, Any]:
+    return read_json_object(group_settings_path_for(group_id, base))
+
+
+def auto_adopt_org_tools_enabled(group_id: str, base: Optional[str] = None) -> bool:
+    settings = read_group_settings(group_id, base)
+    return bool(settings.get('auto_adopt_org_tools', False))
+
+
+def version_id_from_hash(impl_sha256: str) -> str:
+    return (impl_sha256 or '')[:12]
+
+
+def read_json_pointers(path: Path) -> Dict[str, str]:
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding='utf-8'))
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(k): str(v) for k, v in data.items()}
+
+
+def write_json_pointers(path: Path, data: Dict[str, str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(dict(sorted(data.items())), indent=2, ensure_ascii=False) + '\n',
+        encoding='utf-8',
+    )
+
+
+def staging_root(principal: 'Principal', base: Optional[str] = None) -> Path:
+    """Legacy flat staging dir — used only for migrate / detection."""
+    from cat_agent.security.principal import validate_group_id
+
+    validate_group_id(principal.group_id)
+    return groups_root(base) / principal.group_id / 'staging'
+
+
+def active_root(principal: 'Principal', base: Optional[str] = None) -> Path:
+    """Legacy flat active dir — used only for migrate / detection."""
+    from cat_agent.security.principal import validate_group_id
+
+    validate_group_id(principal.group_id)
+    return groups_root(base) / principal.group_id / 'active'
+
+
+def warn_legacy_generated_tools(base: Optional[str] = None) -> None:
+    legacy = generated_tools_root(base)
+    try:
+        has_tools = legacy.is_dir() and any(legacy.iterdir())
+    except OSError:
+        has_tools = False
+    if has_tools:
+        logger.warning(
+            'Legacy flat tools directory {} still exists. '
+            'Migrate with: cat-agent synth migrate-legacy --group <id> '
+            '(operator chooses which group owns those tools; no auto-migrate).',
+            legacy,
+        )
+
+
+def tool_artifact_dir(
+    spec: ToolSpec,
+    base: Optional[str] = None,
+    *,
+    principal: Optional['Principal'] = None,
+    version: Optional[str] = None,
+) -> Path:
+    """Content-addressed artifact path when *principal* is set."""
+    if principal is not None:
+        if not version:
+            raise ValueError('version is required for group-scoped artifact paths')
+        return artifact_version_dir(principal, spec.function_name, version, base)
     return generated_tools_root(base) / spec.function_name
 
 
@@ -125,10 +317,15 @@ def _param_doc(name: str, param: ParameterSpec | str) -> str:
     return f'        {name}: Parameter of type {_param_type(param)}.'
 
 
-def build_proxy_source(spec: ToolSpec, *, executor_name: str = 'wasm') -> str:
+def build_proxy_source(
+    spec: ToolSpec,
+    *,
+    executor_name: str = 'wasm',
+    registered_name: Optional[str] = None,
+) -> str:
     """Render the fixed proxy ``tool.py`` template (never model-generated)."""
     fn = spec.function_name
-    reg = spec.registered_name
+    reg = registered_name or spec.registered_name
     params_sig = ', '.join(
         f'{name}: {_python_type(_param_type(param))}'
         for name, param in spec.parameters.items()
@@ -208,7 +405,12 @@ def assistant_tool_filename(spec: ToolSpec) -> str:
     return f'{spec.function_name}.py'
 
 
-def build_assistant_tool_source(spec: ToolSpec, code: str) -> str:
+def build_assistant_tool_source(
+    spec: ToolSpec,
+    code: str,
+    *,
+    registered_name: Optional[str] = None,
+) -> str:
     """Wrap validated function body as a self-contained ``@tool`` module.
 
     Logic lives inline under the decorated function — no ``impl.py`` import,
@@ -263,7 +465,7 @@ def build_assistant_tool_source(spec: ToolSpec, code: str) -> str:
     header_imports.append('\n')
 
     network = 'True' if spec.requires_network else 'False'
-    reg = spec.registered_name
+    reg = registered_name or spec.registered_name
     decorator = (
         f'@tool(\n'
         f'    name={reg!r},\n'
@@ -353,23 +555,56 @@ def write_artifacts(
     holdout: Sequence[Example],
     base: Optional[str] = None,
     provenance: Optional[Dict[str, Any]] = None,
+    principal: Optional['Principal'] = None,
 ) -> Path:
-    """Write impl/tool/assistant/spec/manifest under ``generated_tools/<name>/``.
+    """Write impl/tool/assistant/spec/manifest.
 
-    When *provenance* is provided (intake pipeline), also writes ``draft.md`` and
-    ``interview.json`` as UTF-8 and records their hashes in the manifest.
+    With *principal*, writes under the immutable content-addressed path
+    ``<workspace>/groups/<group_id>/artifacts/<tool>/<impl_sha256[:12]>/``
+    and updates ``staging.json``. Without *principal*, keeps the legacy
+    ``generated_tools/<tool>/`` layout (tests and older callers).
     """
-    out_dir = tool_artifact_dir(spec, base)
+    impl_text = code if code.endswith('\n') else code + '\n'
+    impl_hash = sha256_text(impl_text)
+    version = version_id_from_hash(impl_hash)
+
+    if principal is not None:
+        warn_legacy_generated_tools(base)
+        from cat_agent.security.principal import namespaced_registered_name
+
+        reg_name = namespaced_registered_name(principal, spec.function_name)
+        out_dir = artifact_version_dir(
+            principal, spec.function_name, version, base,
+        )
+    else:
+        reg_name = spec.registered_name
+        out_dir = tool_artifact_dir(spec, base)
+
+    # Content-addressed dirs are immutable: identical re-synthesis is a no-op.
+    if principal is not None and (out_dir / 'manifest.json').is_file():
+        existing = read_manifest(out_dir)
+        if existing.get('impl_sha256') == impl_hash and verify_impl_hash(out_dir, existing):
+            pointers = read_json_pointers(staging_pointers_path(principal, base))
+            pointers[spec.function_name] = version
+            write_json_pointers(staging_pointers_path(principal, base), pointers)
+            logger.info(
+                'Reused existing artifact {} (staging pointer updated)', out_dir,
+            )
+            return out_dir
+
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    impl_text = code if code.endswith('\n') else code + '\n'
     (out_dir / 'impl.py').write_text(impl_text, encoding='utf-8')
 
-    proxy = build_proxy_source(spec, executor_name=executor_name)
+    proxy = build_proxy_source(
+        spec, executor_name=executor_name, registered_name=reg_name,
+    )
     (out_dir / 'tool.py').write_text(proxy, encoding='utf-8')
 
     assistant_name = assistant_tool_filename(spec)
-    assistant_text = build_assistant_tool_source(spec, impl_text)
+    assistant_text = build_assistant_tool_source(
+        spec, impl_text, registered_name=reg_name,
+    )
     (out_dir / assistant_name).write_text(assistant_text, encoding='utf-8')
 
     (out_dir / 'spec.json').write_text(
@@ -386,9 +621,17 @@ def write_artifacts(
         encoding='utf-8',
     )
 
+    synthesized_by = None
+    if provenance:
+        synthesized_by = provenance.get('synthesized_by')
+    if synthesized_by is None and principal is not None:
+        synthesized_by = principal.user_id
+
     manifest: Dict[str, Any] = {
+        'schema_version': MANIFEST_SCHEMA_VERSION,
         'spec_hash': spec_hash(spec),
-        'impl_sha256': sha256_text(impl_text),
+        'impl_sha256': impl_hash,
+        'artifact_version': version,
         'assistant_tool_file': assistant_name,
         'assistant_tool_sha256': sha256_text(assistant_text),
         'model': model_name,
@@ -398,11 +641,15 @@ def write_artifacts(
         'executor': executor_name,
         'timestamp': datetime.now(timezone.utc).isoformat(),
         'cat_agent_version': CAT_AGENT_VERSION,
-        'registered_name': spec.registered_name,
+        'registered_name': reg_name,
         'function_name': spec.function_name,
         'requires_network': spec.requires_network,
         'spec_file': 'spec.json',
     }
+    if principal is not None:
+        manifest['group_id'] = principal.group_id
+    if synthesized_by is not None:
+        manifest['synthesized_by'] = synthesized_by
 
     if provenance:
         draft_md = provenance.get('draft_markdown')
@@ -422,12 +669,24 @@ def write_artifacts(
             manifest['draft_lang'] = provenance['draft_lang']
         if provenance.get('locale') is not None:
             manifest['locale'] = provenance['locale']
+        if provenance.get('spec_warnings') is not None:
+            manifest['spec_warnings'] = provenance['spec_warnings']
+        if provenance.get('insensitivity') is not None:
+            manifest['insensitivity'] = provenance['insensitivity']
+        if provenance.get('verification') is not None:
+            manifest['verification'] = provenance['verification']
         _audit_intake_completed(spec, out_dir, manifest)
 
     (out_dir / 'manifest.json').write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False, default=str) + '\n',
         encoding='utf-8',
     )
+
+    if principal is not None:
+        pointers = read_json_pointers(staging_pointers_path(principal, base))
+        pointers[spec.function_name] = version
+        write_json_pointers(staging_pointers_path(principal, base), pointers)
+
     return out_dir
 
 
@@ -462,7 +721,34 @@ def _example_dict(example: Example) -> Dict[str, Any]:
 
 
 def read_manifest(tool_dir: Path) -> Dict[str, Any]:
-    return json.loads((tool_dir / 'manifest.json').read_text(encoding='utf-8'))
+    """Load a tool manifest, normalising absent ``verification`` for v1 files."""
+    data = json.loads((tool_dir / 'manifest.json').read_text(encoding='utf-8'))
+    return normalize_manifest(data)
+
+
+def normalize_manifest(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Back-fill schema fields so loaders never KeyError on older manifests."""
+    out = dict(data)
+    out.setdefault('schema_version', 1)
+    if 'verification' not in out:
+        out['verification'] = None
+    return out
+
+
+def update_manifest_verification(
+    tool_dir: Path,
+    verification: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Merge *verification* into an on-disk manifest (e.g. after override)."""
+    path = Path(tool_dir) / 'manifest.json'
+    data = normalize_manifest(json.loads(path.read_text(encoding='utf-8')))
+    data['schema_version'] = MANIFEST_SCHEMA_VERSION
+    data['verification'] = verification
+    path.write_text(
+        json.dumps(data, indent=2, ensure_ascii=False, default=str) + '\n',
+        encoding='utf-8',
+    )
+    return data
 
 
 def verify_impl_hash(tool_dir: Path, manifest: Optional[Dict[str, Any]] = None) -> bool:

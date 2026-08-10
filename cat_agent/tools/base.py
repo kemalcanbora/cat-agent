@@ -96,6 +96,35 @@ def enable_optional_tools(*names: str) -> None:
         TOOL_REGISTRY[name] = OPTIONAL_TOOL_REGISTRY.pop(name)
 
 
+def disable_tools(*names: str) -> list:
+    """Move tools from ``TOOL_REGISTRY`` back into ``OPTIONAL_TOOL_REGISTRY``.
+
+    Symmetric with :func:`enable_optional_tools`. With no arguments, only
+    ``generated_*`` tools are disabled — never built-ins.
+    Returns the list of names that were moved.
+    """
+    if not names:
+        names = tuple(n for n in list(TOOL_REGISTRY.keys()) if n.startswith('generated_'))
+    disabled: list = []
+    for name in names:
+        if name not in TOOL_REGISTRY:
+            continue
+        OPTIONAL_TOOL_REGISTRY[name] = TOOL_REGISTRY.pop(name)
+        disabled.append(name)
+    return disabled
+
+
+def is_generated_tool_name(name: str) -> bool:
+    return bool(name) and str(name).startswith('generated_')
+
+
+def tool_allowed_for_group(name: str, group_id: str) -> bool:
+    """Built-ins are shared; generated tools must match ``generated_<group>_``."""
+    if not is_generated_tool_name(name):
+        return True
+    return str(name).startswith(f'generated_{group_id}_')
+
+
 def is_tool_allowed_for_agent(tool_name: str, tool_cls: type) -> bool:
     from cat_agent.security.tool_policy import is_tool_allowed_in_offline_mode
 

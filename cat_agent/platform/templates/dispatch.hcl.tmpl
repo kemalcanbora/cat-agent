@@ -1,0 +1,126 @@
+job "{{ dispatch_job_id }}" {
+  datacenters = [{% for dc in datacenters %}"{{ dc }}"{% if not loop.last %}, {% endif %}{% endfor %}]
+  namespace   = "{{ namespace }}"
+  type        = "batch"
+
+  meta {
+    managed_by   = "cat-agent"
+    team         = "{{ team }}"
+    agent        = "{{ agent }}"
+    trigger      = "{{ trigger }}"
+    jobs_mode    = "dispatch"
+    image_tag    = "{{ image_tag }}"
+    manifest_sha = "{{ manifest_sha }}"
+    deployed_by  = "{{ deployed_by }}"
+    deployed_at  = "{{ deployed_at }}"
+  }
+
+  parameterized {
+    payload       = "required"
+    meta_required = ["job_id", "requested_by"]
+  }
+
+  group "task" {
+    restart {
+      attempts = 0
+      mode     = "fail"
+    }
+
+    task "task" {
+      driver = "docker"
+
+      config {
+        image = "{{ image_ref }}"
+        # force_pull must stay false (Nomad default). With registry=local the
+        # image exists only on the host Docker daemon shared with this client;
+        # force_pull=true would try to pull a tag that exists nowhere. With a
+        # remote registry and content-addressed tags the image is pulled once;
+        # forcing a pull every restart only adds latency and a failure mode.
+{% if not is_local_registry %}
+        auth {
+          username = "${REGISTRY_USER}"
+          password = "${REGISTRY_PASS}"
+        }
+{% endif %}
+{% if docker_network %}
+        # DOCKER DESKTOP / macOS ONLY — see service.hcl.tmpl. On Linux: omit
+        # docker_network (bridge CNI + ports).
+        network_mode = "{{ docker_network }}"
+{% if consul_dns %}
+        # DOCKER DESKTOP / macOS ONLY — pinned compose Consul DNS. On Linux:
+        # use the real Consul DNS IP, not 10.32.0.2.
+        dns_servers = ["{{ consul_dns }}"]
+{% endif %}
+{% endif %}
+        readonly_rootfs = true
+        command = "python"
+        args = ["-m", "cat_agent.serve.task"]
+      }
+
+      resources {
+        cpu    = {{ job_cpu }}
+        memory = {{ job_memory }}
+      }
+
+      kill_timeout = "{{ job_timeout }}s"
+
+      vault {
+        policies = [
+          "cat-agent-llm-{{ team }}",
+{% if not is_local_registry %}
+          "cat-agent-registry-pull",
+{% endif %}
+{% if has_secrets %}
+          "cat-agent-{{ team }}-{{ agent }}",
+{% endif %}
+        ]
+      }
+
+{% if not is_local_registry %}
+      template {
+        destination = "secrets/registry.env"
+        env         = true
+        change_mode = "noop"
+        data = <<EOF
+REGISTRY_USER={{ '{{' }} with secret "{{ registry_pull_vault_path }}" {{ '}}' }}{{ '{{' }} .Data.data.username {{ '}}' }}{{ '{{' }} end {{ '}}' }}
+REGISTRY_PASS={{ '{{' }} with secret "{{ registry_pull_vault_path }}" {{ '}}' }}{{ '{{' }} .Data.data.password {{ '}}' }}{{ '{{' }} end {{ '}}' }}
+EOF
+      }
+{% endif %}
+      # Team LiteLLM virtual key — never put OPENAI_API_KEY in env {} below.
+      template {
+        destination = "secrets/llm.env"
+        env         = true
+        change_mode = "noop"
+        data = <<EOF
+OPENAI_API_KEY={{ '{{' }} with secret "{{ llm_team_vault_path }}" {{ '}}' }}{{ '{{' }} .Data.data.api_key {{ '}}' }}{{ '{{' }} end {{ '}}' }}
+EOF
+      }
+{% if has_secrets %}
+
+      template {
+        destination = "secrets/app.env"
+        env         = true
+        change_mode = "noop"
+        data = <<EOF
+{% for s in secrets %}
+{{ s }}={{ '{{' }} with secret "secret/data/cat-agent/{{ team }}/{{ agent }}" {{ '}}' }}{{ '{{' }} .Data.data.{{ s }} {{ '}}' }}{{ '{{' }} end {{ '}}' }}
+{% endfor %}
+EOF
+      }
+{% endif %}
+
+      env {
+{% for key, value in env.items() %}
+        {{ key }} = "{{ value }}"
+{% endfor %}
+        CAT_AGENT_MODE = "task"
+        CAT_AGENT_JOB_ID = "${NOMAD_META_job_id}"
+        CAT_AGENT_TRACE_ID = "${NOMAD_META_requested_by}"
+        CAT_AGENT_PAYLOAD = "${NOMAD_TASK_DIR}/payload"
+        CAT_AGENT_LLM_MODEL = "{{ model_alias }}"
+        CAT_AGENT_MODEL_ALIAS = "{{ model_alias }}"
+      }
+    }
+  }
+}

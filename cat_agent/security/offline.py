@@ -40,7 +40,7 @@ def _collect_allowlist_entries() -> List[str]:
         if part:
             entries.append(part)
 
-    for env_name in ('OPENAI_BASE_URL', 'CAT_AGENT_LLM_BASE_URL', 'OLLAMA_BASE_URL'):
+    for env_name in ('OPENAI_BASE_URL', 'CAT_AGENT_LLM_BASE_URL', 'OLLAMA_API_BASE', 'OLLAMA_BASE_URL'):
         host = _host_from_url(os.getenv(env_name, ''))
         if host and host not in entries:
             entries.append(host)

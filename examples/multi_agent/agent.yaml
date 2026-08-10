@@ -1,0 +1,31 @@
+team: demo
+name: earth-spin
+runtime:
+  entrypoint: team_example:registry
+model:
+  type: api
+  # Explainer — injected as CAT_AGENT_LLM_MODEL on deploy.
+  alias: minimax-m3
+trigger:
+  type: http
+  jobs: inline
+tools:
+  allow:
+    - earth_rotation_constants
+    - equatorial_speed
+resources:
+  cpu: 500
+  memory: 1024
+  timeout: 600
+serve:
+  max_concurrency: 2
+  max_queue: 4
+  shutdown_timeout: 45
+scaling:
+  min: 1
+  max: 1
+env:
+  # Per-agent models (same LLM gateway; different model ids).
+  CAT_AGENT_LLM_MODEL_DATAGUY: gemma4:cloud
+  CAT_AGENT_LLM_MODEL_PHYSICSGUY: gpt-oss:20b
+  LOG_LEVEL: INFO

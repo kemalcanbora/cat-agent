@@ -6,7 +6,7 @@ Config from repo ``.env`` (no shell export needed)::
     CAT_AGENT_OFFLINE=0
     OLLAMA_API_KEY=...
     LLM_MODEL=minimax-m2.5:cloud
-    OLLAMA_BASE_URL=https://ollama.com/v1
+    OLLAMA_API_BASE=https://ollama.com/v1
 
     python3.10 examples/synthesis/from_spec/run_synthesis.py
     python3.10 examples/synthesis/from_spec/run_synthesis.py --spec examples/synthesis/from_spec/kdv_spec.json
@@ -48,7 +48,7 @@ def build_llm_cfg() -> Dict:
         or 'EMPTY'
     )
     model = os.getenv('LLM_MODEL', 'minimax-m2.7:cloud')
-    base_url = (os.getenv('OLLAMA_BASE_URL') or 'https://ollama.com/v1').rstrip('/')
+    base_url = (os.getenv('OLLAMA_API_BASE') or 'https://ollama.com/v1').rstrip('/')
     if not base_url.endswith('/v1'):
         base_url = base_url + '/v1'
     return {

@@ -89,7 +89,9 @@ class Assistant(FnCallAgent):
                  rag_cfg: Optional[Dict] = None,
                  memory_cfg: Optional[Dict] = None,
                  handlers: Optional[List] = None,
-                 rate_limiter=None):
+                 rate_limiter=None,
+                 principal=None,
+                 workspace=None):
         """Initialization the assistant.
 
         Args:
@@ -98,6 +100,8 @@ class Assistant(FnCallAgent):
               exchanges are stored across sessions, and long histories are
               compacted via LLM summarization. See MemoryManager for keys.
             rate_limiter: Optional shared rate limiter for LLM calls on this agent.
+            principal: Optional group identity for generated-tool scoping.
+            workspace: Optional workspace root for adopted-tool resolution.
         """
         super().__init__(function_list=function_list,
                          llm=llm,
@@ -107,7 +111,9 @@ class Assistant(FnCallAgent):
                          files=files,
                          rag_cfg=rag_cfg,
                          handlers=handlers,
-                         rate_limiter=rate_limiter)
+                         rate_limiter=rate_limiter,
+                         principal=principal,
+                         workspace=workspace)
         self.memory_manager = None
         if memory_cfg is not None:
             from cat_agent.memory.manager import MemoryManager

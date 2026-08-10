@@ -41,13 +41,19 @@ from cat_agent.observability.helpers import (
 )
 from cat_agent.settings import PROMPT_TRUNCATION_TOLERANCE
 from cat_agent.tools import TOOL_REGISTRY, BaseTool, MCPManager
-from cat_agent.tools.base import OPTIONAL_TOOL_REGISTRY, is_tool_allowed_for_agent
+from cat_agent.tools.base import (
+    OPTIONAL_TOOL_REGISTRY,
+    is_generated_tool_name,
+    is_tool_allowed_for_agent,
+    tool_allowed_for_group,
+)
 from cat_agent.tools.base import ToolExecutionError, ToolNotFoundError, ToolServiceError
 from cat_agent.tools.simple_doc_parser import DocParserError
 from cat_agent.utils.utils import has_chinese_messages, merge_generate_cfgs
 
 if TYPE_CHECKING:
     from cat_agent.observability.handlers.base import BaseHandler
+    from cat_agent.security.principal import Principal
 
 # One-time warning when sync run() is invoked under a running event loop.
 _RUN_IN_LOOP_WARNED = False
@@ -75,6 +81,8 @@ class Agent(ABC):
                  name: Optional[str] = None,
                  description: Optional[str] = None,
                  handlers: Optional[List['BaseHandler']] = None,
+                 principal: Optional['Principal'] = None,
+                 workspace: Optional[str] = None,
                  **kwargs):
         """Initialization the agent.
 
@@ -93,6 +101,10 @@ class Agent(ABC):
             name: The name of this agent.
             description: The description of this agent, which will be used for multi_agent.
             handlers: Optional observability handlers for run, LLM, and tool events.
+            principal: Optional group identity. When set, generated tools from other
+              groups are refused unless adopted into this group (see *workspace*).
+            workspace: Optional workspace root used with *principal* to resolve
+              adopted foreign tools.
             rate_limiter: Optional shared :class:`~cat_agent.utils.rate_limit.RateLimiter`
               applied to LLM calls for this agent. Tools may declare their own via
               ``cfg['rate_limiter']`` / ``cfg['rate_limit']``.
@@ -100,6 +112,14 @@ class Agent(ABC):
         if handlers is None:
             handlers = kwargs.pop('handlers', None)
         rate_limiter = kwargs.pop('rate_limiter', None)
+        self.principal = principal
+        self.workspace = workspace
+        self._adopted_tool_names = set()
+        if principal is not None:
+            from cat_agent.synthesis.share import adopted_registered_names
+            self._adopted_tool_names = adopted_registered_names(
+                principal, workspace=workspace,
+            )
         if isinstance(llm, dict):
             self.llm = get_chat_model(llm)
         else:
@@ -1464,6 +1484,7 @@ class Agent(ABC):
     def _init_tool(self, tool: Union[str, Dict, BaseTool]):
         if isinstance(tool, BaseTool):
             tool_name = tool.name
+            self._assert_tool_allowed_for_principal(tool_name)
             if tool_name in self.function_map:
                 logger.warning(f'Repeatedly adding tool {tool_name}, will use the newest tool in function list')
             self.function_map[tool_name] = tool
@@ -1476,6 +1497,7 @@ class Agent(ABC):
             tools = MCPManager().initConfig(tool)
             for tool in tools:
                 tool_name = tool.name
+                self._assert_tool_allowed_for_principal(tool_name)
                 if tool_name in self.function_map:
                     logger.warning(f'Repeatedly adding tool {tool_name}, will use the newest tool in function list')
                 self.function_map[tool_name] = tool
@@ -1486,6 +1508,7 @@ class Agent(ABC):
             else:
                 tool_name = tool
                 tool_cfg = None
+            self._assert_tool_allowed_for_principal(tool_name)
             if tool_name not in TOOL_REGISTRY:
                 if tool_name in OPTIONAL_TOOL_REGISTRY:
                     raise ValueError(
@@ -1507,6 +1530,24 @@ class Agent(ABC):
             if tool_name in self.function_map:
                 logger.warning(f'Repeatedly adding tool {tool_name}, will use the newest tool in function list')
             self.function_map[tool_name] = TOOL_REGISTRY[tool_name](tool_cfg)
+
+    def _assert_tool_allowed_for_principal(self, tool_name: str) -> None:
+        """Refuse foreign-group generated tools when a principal is bound."""
+        principal = getattr(self, 'principal', None)
+        if principal is None:
+            return
+        if not is_generated_tool_name(tool_name):
+            return
+        if tool_allowed_for_group(tool_name, principal.group_id):
+            return
+        adopted = getattr(self, '_adopted_tool_names', None) or set()
+        if tool_name in adopted:
+            return
+        raise ValueError(
+            f'Tool {tool_name!r} belongs to another group and is not visible to '
+            f'principal group {principal.group_id!r} '
+            '(not owned and not adopted).'
+        )
 
     def _detect_tool(self, message: Message) -> Tuple[bool, str, str, str]:
         """A built-in tool call detection for func_call format message.

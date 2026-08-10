@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cat-agent-scheduler
+  labels:
+    app.kubernetes.io/name: cat-agent
+    app.kubernetes.io/component: scheduler
+data:
+  # SQLite on a shared PVC works for single-replica CronJobs.
+  # For multi-replica / HA use Postgres, e.g.:
+  #   postgresql+psycopg://cat:SECRET@postgres:5432/cat_agent
+  CAT_AGENT_SCHEDULER_DSN: "sqlite:////data/workspace/scheduling/scheduling.sqlite"
+  CAT_AGENT_DEFAULT_WORKSPACE: "/data/workspace"
+  CAT_AGENT_JOB_LIMIT: "50"
+  CAT_AGENT_LEASE_SECONDS: "900"
+  CAT_AGENT_OFFLINE: "0"
+---
+# Example Secret (do not commit real values). Create with:
+#   kubectl create secret generic cat-agent-secrets \
+#     --from-literal=OPENAI_API_KEY=... \
+#     --from-literal=SMTP_PASSWORD=...
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cat-agent-secrets
+  labels:
+    app.kubernetes.io/name: cat-agent
+type: Opaque
+stringData:
+  OPENAI_API_KEY: "REPLACE_ME"
+  OPENAI_BASE_URL: "http://llm:8080/v1"
+  SMTP_HOST: "smtp.example.com"
+  SMTP_PORT: "587"
+  SMTP_USER: "reports@example.com"
+  SMTP_PASSWORD: "REPLACE_ME"
+  SMTP_FROM: "reports@example.com"
+  SMTP_STARTTLS: "1"

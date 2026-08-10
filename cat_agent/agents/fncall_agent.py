@@ -57,13 +57,17 @@ class FnCallAgent(Agent):
         if handlers is None:
             handlers = kwargs.pop('handlers', None)
         rate_limiter = kwargs.pop('rate_limiter', None)
+        principal = kwargs.pop('principal', None)
+        workspace = kwargs.pop('workspace', None)
         super().__init__(function_list=function_list,
                          llm=llm,
                          system_message=system_message,
                          name=name,
                          description=description,
                          handlers=handlers,
-                         rate_limiter=rate_limiter)
+                         rate_limiter=rate_limiter,
+                         principal=principal,
+                         workspace=workspace)
 
         if not hasattr(self, 'mem'):
             # Default to use Memory to manage files

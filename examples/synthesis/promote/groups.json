@@ -1,0 +1,17 @@
+{
+  "builder": {
+    "finance": ["member"]
+  },
+  "approver": {
+    "finance": ["member", "promoter"]
+  },
+  "lead": {
+    "finance": ["member", "promoter", "sharer"]
+  },
+  "ops_lead": {
+    "ops": ["member", "promoter", "sharer"]
+  },
+  "ops_member": {
+    "ops": ["member"]
+  }
+}

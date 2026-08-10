@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence,
 from cat_agent.llm.base import BaseChatModel
 from cat_agent.log import logger
 from cat_agent.synthesis.executors import SandboxExecutor, get_executor
+from cat_agent.synthesis.artifacts import update_manifest_verification
 from cat_agent.synthesis.intake.compile import CompileResult, compile_to_spec
 from cat_agent.synthesis.intake.draft import Draft
 from cat_agent.synthesis.intake.interview import (
@@ -26,14 +27,19 @@ from cat_agent.synthesis.intake.interview import (
     Question,
     SpecInterviewer,
     holdout_question,
+    insensitivity_question,
+    is_affirmative,
     is_blank,
     question_key,
 )
+from cat_agent.synthesis.mutation import probe_input_sensitivity
 from cat_agent.synthesis.smith import Status, SynthesisResult, ToolSmith
 from cat_agent.synthesis.spec import Example
+from cat_agent.synthesis.spec_quality import SpecWarning
 
 if TYPE_CHECKING:
     from cat_agent.observability.handlers.base import BaseHandler
+    from cat_agent.security.principal import Principal
 
 AskFn = Callable[[Question], str]
 
@@ -54,6 +60,7 @@ class IntakeResult:
     error: Optional[str] = None
     provenance: Dict[str, Any] = field(default_factory=dict)
     phase: Phase = Phase.DONE
+    spec_warnings: List[SpecWarning] = field(default_factory=list)
 
 
 def synthesize_from_draft(
@@ -70,6 +77,8 @@ def synthesize_from_draft(
     output_dir: Optional[str] = None,
     handlers: Optional[List['BaseHandler']] = None,
     lang: Optional[str] = None,
+    allow_weak_spec: bool = True,
+    principal: Optional['Principal'] = None,
 ) -> IntakeResult:
     """One-call API: draft → interview → confirm → ToolSpec → ToolSmith."""
     ask = ask or _default_ask
@@ -286,6 +295,29 @@ def synthesize_from_draft(
         )
 
     spec = compile_result.spec
+    spec_warnings = list(compile_result.warnings or [])
+    warn_codes = [w.code for w in spec_warnings if w.severity == 'warn']
+    if warn_codes and not allow_weak_spec:
+        return IntakeResult(
+            ok=False,
+            draft=draft,
+            spec=spec,
+            synthesis=None,
+            interview=state,
+            confirmation=confirmation,
+            compile=compile_result,
+            error=(
+                'Weak spec rejected (allow_weak_spec=False): '
+                + ', '.join(warn_codes)
+            ),
+            phase=Phase.COMPILE,
+            provenance={
+                'confirmation_generations': confirmation_generations,
+                'interview': _interview_payload(state, confirmation),
+                'spec_warnings': [_warning_dict(w) for w in spec_warnings],
+            },
+            spec_warnings=spec_warnings,
+        )
 
     exec_backend = executor or get_executor('wasm')
     smith = ToolSmith(
@@ -303,11 +335,15 @@ def synthesize_from_draft(
         'interview': _interview_payload(state, confirmation),
         'source_path': draft.source_path,
         'confirmation_generations': confirmation_generations,
+        'spec_warnings': [_warning_dict(w) for w in spec_warnings],
     }
+    if principal is not None:
+        provenance['synthesized_by'] = principal.user_id
+        provenance['group_id'] = principal.group_id
 
     # -------------------- SYNTHESISE (+ holdout reopen) --------------------
     holdout_rounds = 0
-    synthesis = smith.synthesize(spec, provenance=provenance)
+    synthesis = smith.synthesize(spec, provenance=provenance, principal=principal)
 
     while (
         synthesis.status == Status.HOLDOUT_FAILED
@@ -349,7 +385,7 @@ def synthesize_from_draft(
             else:
                 raise
         provenance['interview'] = _interview_payload(state, confirmation)
-        synthesis = smith.synthesize(spec, provenance=provenance)
+        synthesis = smith.synthesize(spec, provenance=provenance, principal=principal)
 
     state.phase = Phase.DONE
 
@@ -368,6 +404,23 @@ def synthesize_from_draft(
             ),
             provenance=provenance,
             phase=Phase.DONE,
+            spec_warnings=spec_warnings,
+        )
+
+    # Input-space sensitivity: advisory question, not a rejection.
+    if synthesis.ok and synthesis.code:
+        synthesis, spec, provenance = _maybe_resolve_insensitivity(
+            ask=ask,
+            interviewer=interviewer,
+            state=state,
+            smith=smith,
+            spec=spec,
+            synthesis=synthesis,
+            provenance=provenance,
+            confirmation=confirmation,
+            working_lang=working_lang,
+            executor=exec_backend,
+            principal=principal,
         )
 
     return IntakeResult(
@@ -382,7 +435,141 @@ def synthesize_from_draft(
         error=None if synthesis.ok else synthesis.error,
         provenance=provenance,
         phase=Phase.DONE,
+        spec_warnings=spec_warnings,
     )
+
+
+def _warning_dict(warning: SpecWarning) -> Dict[str, str]:
+    return {
+        'code': warning.code,
+        'message': warning.message,
+        'severity': warning.severity,
+    }
+
+
+def _maybe_resolve_insensitivity(
+    *,
+    ask: AskFn,
+    interviewer: SpecInterviewer,
+    state: InterviewState,
+    smith: ToolSmith,
+    spec: Any,
+    synthesis: SynthesisResult,
+    provenance: Dict[str, Any],
+    confirmation: str,
+    working_lang: str,
+    executor: SandboxExecutor,
+    principal: Optional['Principal'] = None,
+) -> tuple:
+    """Ask about input insensitivity; optionally append a negative and resynthesise."""
+
+    def runner(code: str, inputs: Dict[str, Any]) -> Any:
+        result = executor.run(
+            code,
+            inputs,
+            deps=spec.deps or None,
+            function_name=spec.function_name,
+        )
+        if not result.ok:
+            raise RuntimeError(result.error or 'exec failed')
+        return result.returned
+
+    findings = probe_input_sensitivity(
+        synthesis.code or '',
+        spec,
+        list(spec.examples),
+        runner,
+        limit=64,
+    )
+    if not findings:
+        return synthesis, spec, provenance
+
+    finding = findings[0]
+    q = insensitivity_question(finding, lang=working_lang)
+    answer = _collect_answer(ask, q, state)
+    if answer is None:
+        return synthesis, spec, provenance
+    state = interviewer.record_interview_answer(state, q, answer)
+    # Affirmative = "yes, intended" → leave alone. Anything else → add negative.
+    if is_affirmative(answer):
+        decision = {
+            'kind': 'insensitivity',
+            'param': finding.param,
+            'question': q.text,
+            'answer': answer,
+            'user_said_intended': True,
+            'variants_tried': finding.variants_tried,
+            'variants_per_example': dict(finding.variants_per_example),
+        }
+        provenance['interview'] = _interview_payload(state, confirmation)
+        provenance['insensitivity'] = decision
+        provenance['warnings_overridden'] = True
+        provenance['override_decision'] = decision
+        verification = dict(synthesis.verification or {})
+        verification['warnings_overridden'] = True
+        verification['override_decision'] = decision
+        synthesis.verification = verification
+        if synthesis.artifact_dir:
+            try:
+                update_manifest_verification(synthesis.artifact_dir, verification)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    'Could not update manifest verification after override: {}',
+                    exc,
+                )
+        return synthesis, spec, provenance
+
+    sample = finding.sample_unchanged[0] if finding.sample_unchanged else None
+    if sample is None:
+        return synthesis, spec, provenance
+    new_inputs = dict(finding.base_inputs)
+    new_inputs[finding.param] = sample
+    new_ex = Example(
+        inputs=new_inputs,
+        expected=False,
+        note='insensitivity clarification: near-miss negative',
+    )
+    state.added_examples.append(new_ex)
+    state.example_traces.append({
+        'source': 'insensitivity',
+        'answer': answer,
+        'example': {'inputs': new_ex.inputs, 'expected': new_ex.expected},
+    })
+    from cat_agent.synthesis.spec import tool_spec_from_dict
+
+    data = spec.to_dict()
+    data['examples'] = [
+        {'inputs': ex.inputs, 'expected': ex.expected, 'note': ex.note}
+        for ex in list(spec.examples) + [new_ex]
+    ]
+    try:
+        spec = tool_spec_from_dict(data)
+    except ValueError as exc:
+        if 'already registered' in str(exc):
+            from cat_agent.tools.base import OPTIONAL_TOOL_REGISTRY, TOOL_REGISTRY
+            TOOL_REGISTRY.pop(spec.registered_name, None)
+            OPTIONAL_TOOL_REGISTRY.pop(spec.registered_name, None)
+            TOOL_REGISTRY.pop(spec.name, None)
+            OPTIONAL_TOOL_REGISTRY.pop(spec.name, None)
+            spec = tool_spec_from_dict(data)
+        else:
+            raise
+    decision = {
+        'kind': 'insensitivity',
+        'param': finding.param,
+        'question': q.text,
+        'answer': answer,
+        'user_said_intended': False,
+        'variants_tried': finding.variants_tried,
+        'variants_per_example': dict(finding.variants_per_example),
+        'added_example': {'inputs': new_ex.inputs, 'expected': new_ex.expected},
+    }
+    provenance['interview'] = _interview_payload(state, confirmation)
+    provenance['insensitivity'] = decision
+    provenance['warnings_overridden'] = False
+    provenance['override_decision'] = decision
+    synthesis = smith.synthesize(spec, provenance=provenance, principal=principal)
+    return synthesis, spec, provenance
 
 
 def _collect_answer(
