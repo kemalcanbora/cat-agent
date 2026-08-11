@@ -11,10 +11,10 @@
 # limitations under the License.
 
 from abc import ABC, abstractmethod
-from typing import Callable, Dict, Iterator, List, Optional, Tuple, Union
+from typing import Callable, Iterator, List, Optional, Tuple
 
 from cat_agent.agent import Agent
-from cat_agent.llm.schema import FUNCTION, Message
+from cat_agent.llm.schema import Message
 from cat_agent.graph.state import GraphState
 
 # A node yields a stream of (chunk, new_state) tuples:
@@ -81,28 +81,3 @@ class FunctionNode(Node):
             raise TypeError(
                 f"FunctionNode '{self.name}' must return a GraphState, got {type(new_state).__name__}.")
         yield None, new_state
-
-
-class ToolNode(Node):
-    """Invoke a registered tool directly and append its result as a function message.
-
-    `args_from` maps the current state to the tool's argument dict. The tool is
-    executed via the host agent's `_call_tool`, so it participates in the
-    existing observability spans.
-    """
-
-    def __init__(self,
-                 name: str,
-                 tool_name: str,
-                 args_from: Callable[[GraphState], Union[Dict, str]]):
-        super().__init__(name)
-        self.tool_name = tool_name
-        self.args_from = args_from
-
-    def run(self, state: GraphState, host: 'Agent', **kwargs) -> NodeStream:
-        kwargs.pop('host', None)
-        tool_args = self.args_from(state)
-        result = host._call_tool(self.tool_name, tool_args, **kwargs)
-        msg = Message(role=FUNCTION, name=self.tool_name, content=result)
-        state.messages = state.messages + [msg]
-        yield [msg], state

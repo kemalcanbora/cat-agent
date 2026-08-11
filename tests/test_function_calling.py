@@ -118,14 +118,14 @@ class TestBaseFnCallModelStreamPostprocess:
             def _chat_no_stream(self, *args, **kwargs):
                 raise NotImplementedError
 
-        model = _StubFnCallModel({'generate_cfg': {'fncall_prompt_type': 'nous'}})
+        model = _StubFnCallModel({'generate_cfg': {}})
         model.fncall_prompt = MagicMock()
         model.fncall_prompt.postprocess_fncall_messages.side_effect = lambda messages, **kwargs: messages
 
         chunk1 = [Message(ASSISTANT, 'partial')]
         chunk2 = [Message(ASSISTANT, 'partial tool')]
         chunks = iter([chunk1, chunk2])
-        generate_cfg = {'parallel_function_calls': False, 'function_choice': 'auto'}
+        generate_cfg = {'function_choice': 'auto'}
 
         with patch.object(
             BaseFnCallModel.__bases__[0],

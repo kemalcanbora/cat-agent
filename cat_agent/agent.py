@@ -1557,6 +1557,11 @@ class Agent(ABC):
 
         Returns:
             Need to call tool or not, tool name, tool args, text replies.
+
+        Note:
+            Prefers the first entry of ``message.tool_calls`` (via the
+            ``function_call`` compat property). For parallel calls, use
+            :meth:`_iter_tool_call_jobs` instead.
         """
         func_name = None
         func_args = None
@@ -1570,6 +1575,18 @@ class Agent(ABC):
             text = ''
 
         return (func_name is not None), func_name, func_args, text
+
+    def _iter_tool_call_jobs(self, messages: List[Message]):
+        """Yield ``(source_message, tool_call_id, name, arguments)`` for each tool call.
+
+        A single assistant message may carry multiple ``tool_calls``; each becomes
+        its own job. Ordering matches ``tool_calls`` order (call order, not completion).
+        """
+        for msg in messages:
+            if not msg.tool_calls:
+                continue
+            for tc in msg.tool_calls:
+                yield msg, tc.id, tc.function.name, tc.function.arguments
 
 
 # The most basic form of an agent is just a LLM, not augmented with any tool or workflow.

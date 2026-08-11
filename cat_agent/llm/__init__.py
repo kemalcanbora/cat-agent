@@ -5,7 +5,6 @@ from .base import LLM_REGISTRY, BaseChatModel, ModelServiceError
 from .oai import TextChatAtOAI
 
 _BACKEND_MODULES = {
-    'openvino': 'cat_agent.llm.openvino',
     'transformers': 'cat_agent.llm.transformers_llm',
     'llama_cpp': 'cat_agent.llm.llama_cpp',
     'llama_cpp_vision': 'cat_agent.llm.llama_cpp_vision',
@@ -36,7 +35,6 @@ def get_chat_model(cfg: Union[dict, str] = 'qwen-plus') -> BaseChatModel:
 
 def __getattr__(name: str):
     lazy_exports = {
-        'OpenVINO': ('cat_agent.llm.openvino', 'OpenVINO'),
         'Transformers': ('cat_agent.llm.transformers_llm', 'Transformers'),
         'LlamaCpp': ('cat_agent.llm.llama_cpp', 'LlamaCpp'),
         'LlamaCppVision': ('cat_agent.llm.llama_cpp_vision', 'LlamaCppVision'),
@@ -51,7 +49,6 @@ def __getattr__(name: str):
 __all__ = [
     'BaseChatModel',
     'TextChatAtOAI',
-    'OpenVINO',
     'Transformers',
     'MLXLm',
     'get_chat_model',

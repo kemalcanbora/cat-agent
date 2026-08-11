@@ -75,8 +75,8 @@ def format_obs_io(value: Any, ctx: Optional[RunContext]) -> Optional[str]:
                 entry: dict = {'role': item.role, 'content': item.content}
                 if item.name:
                     entry['name'] = item.name
-                if item.function_call is not None:
-                    entry['function_call'] = item.function_call.model_dump()
+                if getattr(item, 'tool_calls', None):
+                    entry['tool_calls'] = [tc.model_dump() for tc in item.tool_calls]
                 if getattr(item, 'reasoning_content', None):
                     entry['reasoning_content'] = item.reasoning_content
                 simplified.append(entry)
@@ -84,8 +84,19 @@ def format_obs_io(value: Any, ctx: Optional[RunContext]) -> Optional[str]:
                 entry = {'role': item.get('role'), 'content': item.get('content')}
                 if item.get('name'):
                     entry['name'] = item['name']
-                if item.get('function_call'):
-                    entry['function_call'] = item['function_call']
+                if item.get('tool_calls'):
+                    entry['tool_calls'] = item['tool_calls']
+                elif item.get('function_call'):
+                    # Legacy dump / audit payload: normalise display shape only.
+                    fc = item['function_call']
+                    entry['tool_calls'] = [{
+                        'id': (item.get('extra') or {}).get('function_id') or '1',
+                        'type': 'function',
+                        'function': fc if isinstance(fc, dict) else {
+                            'name': getattr(fc, 'name', ''),
+                            'arguments': getattr(fc, 'arguments', ''),
+                        },
+                    }]
                 if item.get('reasoning_content'):
                     entry['reasoning_content'] = item['reasoning_content']
                 simplified.append(entry)
@@ -145,7 +156,18 @@ def format_llm_obs_output(messages: Any, ctx: Optional[RunContext] = None) -> Op
         if text:
             parts.append(text)
         fc = _message_field(msg, 'function_call')
-        if fc is not None:
+        tcs = _message_field(msg, 'tool_calls')
+        if tcs:
+            for tc in tcs:
+                if isinstance(tc, dict):
+                    fn = tc.get('function') or {}
+                    name = fn.get('name', '')
+                    args = fn.get('arguments', '')
+                else:
+                    name = getattr(getattr(tc, 'function', None), 'name', '') or ''
+                    args = getattr(getattr(tc, 'function', None), 'arguments', '') or ''
+                parts.append(f'[tool_call {name}({args})]')
+        elif fc is not None:
             if isinstance(fc, dict):
                 name = fc.get('name', '')
                 args = fc.get('arguments', '')
@@ -196,7 +218,7 @@ def format_run_obs_output(messages: Any, ctx: Optional[RunContext] = None) -> Op
 
 def messages_have_tool_call(messages: List[Message]) -> bool:
     for msg in messages or []:
-        if getattr(msg, 'function_call', None):
+        if getattr(msg, 'tool_calls', None) or getattr(msg, 'function_call', None):
             return True
     return False
 

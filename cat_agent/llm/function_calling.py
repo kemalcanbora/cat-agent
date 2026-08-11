@@ -16,6 +16,7 @@ from pprint import pformat
 from typing import Dict, Iterator, List, Literal, Optional, Union
 
 from cat_agent.llm.base import BaseChatModel
+from cat_agent.llm.fncall_prompts.nous_fncall_prompt import NousFnCallPrompt
 from cat_agent.llm.schema import ASSISTANT, FUNCTION, USER, ContentItem, Message
 from cat_agent.log import logger
 
@@ -24,19 +25,17 @@ class BaseFnCallModel(BaseChatModel, ABC):
 
     def __init__(self, cfg: Optional[Dict] = None):
         super().__init__(cfg)
-        fncall_prompt_type = self.generate_cfg.get('fncall_prompt_type', 'nous')
-        if fncall_prompt_type == 'qwen':
-            from cat_agent.llm.fncall_prompts.qwen_fncall_prompt import FN_STOP_WORDS, QwenFnCallPrompt
-            self.fncall_prompt = QwenFnCallPrompt()
-            stop = self.generate_cfg.get('stop', [])
-            self.generate_cfg['stop'] = stop + [x for x in FN_STOP_WORDS if x not in stop]
-        elif fncall_prompt_type == 'nous':
-            from cat_agent.llm.fncall_prompts.nous_fncall_prompt import NousFnCallPrompt
-            self.fncall_prompt = NousFnCallPrompt()
-        else:
-            raise NotImplementedError
-        if 'fncall_prompt_type' in self.generate_cfg:
-            del self.generate_cfg['fncall_prompt_type']
+        self._fncall_prompt = None
+
+    @property
+    def fncall_prompt(self):
+        if self._fncall_prompt is None:
+            self._fncall_prompt = NousFnCallPrompt()
+        return self._fncall_prompt
+
+    @fncall_prompt.setter
+    def fncall_prompt(self, value) -> None:
+        self._fncall_prompt = value
 
     def _preprocess_messages(
         self,
@@ -52,15 +51,10 @@ class BaseFnCallModel(BaseChatModel, ABC):
         if (not functions) or (generate_cfg.get('function_choice', 'auto') == 'none'):
             messages = self._remove_fncall_messages(messages, lang=lang)
         else:
-            # validate_num_fncall_results(
-            #     messages=messages,
-            #     support_multimodal_input=self.support_multimodal_input,
-            # )
             messages = self.fncall_prompt.preprocess_fncall_messages(
                 messages=messages,
                 functions=functions,
                 lang=lang,
-                parallel_function_calls=generate_cfg.get('parallel_function_calls', False),
                 function_choice=generate_cfg.get('function_choice', 'auto'),
             )
         return messages
@@ -75,7 +69,6 @@ class BaseFnCallModel(BaseChatModel, ABC):
         if fncall_mode:
             messages = self.fncall_prompt.postprocess_fncall_messages(
                 messages=messages,
-                parallel_function_calls=generate_cfg.get('parallel_function_calls', False),
                 function_choice=generate_cfg.get('function_choice', 'auto'),
                 thought_in_content=generate_cfg.get('thought_in_content', False),
             )
@@ -154,7 +147,7 @@ class BaseFnCallModel(BaseChatModel, ABC):
             raise NotImplementedError('Please use stream=True with delta_stream=False, because delta_stream=True'
                                       ' is not implemented for function calling due to some technical reasons.')
         generate_cfg = copy.deepcopy(generate_cfg)
-        for k in ['parallel_function_calls', 'function_choice', 'thought_in_content']:
+        for k in ['function_choice', 'thought_in_content']:
             if k in generate_cfg:
                 del generate_cfg[k]
         return self._continue_assistant_response(messages, generate_cfg=generate_cfg, stream=stream)

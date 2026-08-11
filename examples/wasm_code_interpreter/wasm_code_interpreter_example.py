@@ -71,14 +71,15 @@ def main():
             if role == 'function':
                 print(f'\n[TOOL RESULT] {last.get("name", "")}:')
                 print(last.get('content', '')[:500])
-            elif role == 'assistant' and last.get('function_call'):
-                fc = last['function_call']
-                print(f'\n[TOOL CALL] {fc.get("name", "")}')
+            elif role == 'assistant' and last.get('tool_calls'):
+                for tc in last['tool_calls']:
+                    fn = (tc.get('function') or {}) if isinstance(tc, dict) else {}
+                    print(f'\n[TOOL CALL] {fn.get("name", "")}')
 
         # Print final response
         if response:
             final = response[-1]
-            if final.get('role') == 'assistant' and not final.get('function_call'):
+            if final.get('role') == 'assistant' and not final.get('tool_calls'):
                 print(f'\nASSISTANT:\n{final.get("content", "")}')
 
         print(time.time() - st, 'seconds elapsed')

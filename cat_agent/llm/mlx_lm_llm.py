@@ -60,7 +60,8 @@ class MLXLm(BaseFnCallModel):
         # Important: keep BaseChatModel.model as a string model-id for downstream logic.
         self.mlx_model, self.mlx_tokenizer = load(model_id)
 
-        # mlx-lm is text-only today
+        # mlx-lm is text-only today; tool calling uses fncall_prompts (prompt path).
+        # Native tool calling via the OpenAI-compatible surface is a follow-up.
         self._supports_function_calling = True
         self._support_multimodal_input = False
 
@@ -70,6 +71,10 @@ class MLXLm(BaseFnCallModel):
 
     @property
     def support_audio_input(self) -> bool:
+        return False
+
+    @property
+    def supports_native_tools(self) -> bool:
         return False
 
     # ------------------------------------------------------------------

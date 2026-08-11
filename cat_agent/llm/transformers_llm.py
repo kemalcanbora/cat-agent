@@ -49,6 +49,12 @@ class Transformers(BaseFnCallModel):
         }
         bot = Assistant(llm=llm_cfg, ...)
     """
+
+    @property
+    def supports_native_tools(self) -> bool:
+        # Prompt-path via fncall_prompts. HF models with native tool templates
+        # (and vLLM --enable-auto-tool-choice) are a follow-up.
+        return False
     def __init__(self, cfg: Optional[Dict] = None):
         super().__init__(cfg)
 

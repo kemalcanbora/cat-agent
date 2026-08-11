@@ -8,6 +8,7 @@ from cat_agent.tools.base import (
     TOOL_REGISTRY,
     ToolServiceError,
     is_tool_schema,
+    list_params_to_json_schema,
 )
 from cat_agent.tools.storage import Storage
 
@@ -39,6 +40,29 @@ class TestIsToolSchema:
         assert is_tool_schema(schema) is False
 
 
+class TestListParamsToJsonSchema:
+
+    def test_converts_legacy_list_to_openai_object(self):
+        legacy = [
+            {"name": "q", "type": "string", "description": "query", "required": True},
+            {"name": "n", "type": "number", "required": False},
+        ]
+        out = list_params_to_json_schema(legacy)
+        assert out == {
+            "type": "object",
+            "properties": {
+                "q": {"type": "string", "description": "query"},
+                "n": {"type": "number"},
+            },
+            "required": ["q"],
+        }
+        assert is_tool_schema({"name": "t", "description": "d", "parameters": out})
+
+    def test_empty_list_is_empty_object_schema(self):
+        out = list_params_to_json_schema([])
+        assert out == {"type": "object", "properties": {}, "required": []}
+
+
 class TestBaseTool:
 
     def test_storage_has_name_and_function(self):
@@ -48,6 +72,23 @@ class TestBaseTool:
         assert fn["name"] == "storage"
         assert "description" in fn
         assert "parameters" in fn
+
+    def test_function_exports_list_params_as_json_schema(self):
+        """Hub tools still declare legacy list params; wire format must be object."""
+        from cat_agent.multi_agent.tools import AskAgentTool
+
+        class _Hub:
+            pass
+
+        tool = AskAgentTool(_Hub(), "DataGuy")
+        assert isinstance(tool.parameters, list)
+        fn = tool.function
+        assert isinstance(fn["parameters"], dict)
+        assert fn["parameters"]["type"] == "object"
+        assert "name" in fn["parameters"]["properties"]
+        assert "question" in fn["parameters"]["properties"]
+        assert set(fn["parameters"]["required"]) == {"name", "question"}
+        assert is_tool_schema(fn)
 
     def test_verify_json_format_args_required_missing_raises(self):
         storage = Storage({"storage_root_path": tempfile.mkdtemp()})

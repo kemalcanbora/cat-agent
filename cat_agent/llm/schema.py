@@ -1,18 +1,21 @@
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
-# 
+#
 #    http://www.apache.org/licenses/LICENSE-2.0
-# 
+#
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Literal, Optional, Tuple, Union
+from __future__ import annotations
 
-from pydantic import BaseModel, field_validator, model_validator
+import uuid
+from typing import Any, List, Literal, Optional, Tuple, Union
+
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 DEFAULT_SYSTEM_MESSAGE = ''
 
@@ -25,11 +28,18 @@ SYSTEM = 'system'
 USER = 'user'
 ASSISTANT = 'assistant'
 FUNCTION = 'function'
+TOOL = 'tool'
 
 FILE = 'file'
 IMAGE = 'image'
 AUDIO = 'audio'
 VIDEO = 'video'
+
+_VALID_ROLES = (USER, ASSISTANT, SYSTEM, FUNCTION, TOOL)
+
+
+def generate_tool_call_id() -> str:
+    return f'call_{uuid.uuid4().hex[:12]}'
 
 
 class BaseModelCompatibleDict(BaseModel):
@@ -51,12 +61,9 @@ class BaseModelCompatibleDict(BaseModel):
         return super().model_dump_json(**kwargs)
 
     def get(self, key, default=None):
+        """Dict-like get: return *default* only when the attribute is missing."""
         try:
-            value = getattr(self, key)
-            if value:
-                return value
-            else:
-                return default
+            return getattr(self, key)
         except AttributeError:
             return default
 
@@ -73,6 +80,33 @@ class FunctionCall(BaseModelCompatibleDict):
 
     def __repr__(self):
         return f'FunctionCall({self.model_dump()})'
+
+
+class ToolCall(BaseModelCompatibleDict):
+    id: str
+    type: Literal['function'] = 'function'
+    function: FunctionCall
+
+    def __init__(
+        self,
+        id: Optional[str] = None,
+        type: Literal['function'] = 'function',
+        function: Optional[Union[FunctionCall, dict]] = None,
+        **kwargs,
+    ):
+        if function is None and 'function' in kwargs:
+            function = kwargs.pop('function')
+        if isinstance(function, dict):
+            function = FunctionCall(
+                name=function.get('name') or '',
+                arguments=function.get('arguments') or '',
+            )
+        if function is None:
+            raise ValueError('ToolCall requires function')
+        super().__init__(id=id or generate_tool_call_id(), type=type, function=function)
+
+    def __repr__(self):
+        return f'ToolCall({self.model_dump()})'
 
 
 class ContentItem(BaseModelCompatibleDict):
@@ -128,11 +162,20 @@ class ContentItem(BaseModelCompatibleDict):
 
 
 class Message(BaseModelCompatibleDict):
+    """Chat message. ``tool_calls`` is canonical; ``function_call`` is object-level read compat only.
+
+    ``model_dump()`` emits ``tool_calls`` (never a derived ``function_call`` key).
+    Constructors and inbound converters still accept a legacy ``function_call`` key.
+    """
+
+    model_config = ConfigDict(extra='allow')
+
     role: str
     content: Union[str, List[ContentItem]]
     reasoning_content: Optional[Union[str, List[ContentItem]]] = None
     name: Optional[str] = None
-    function_call: Optional[FunctionCall] = None
+    tool_calls: Optional[List[ToolCall]] = None
+    tool_call_id: Optional[str] = None
     extra: Optional[dict] = None
 
     def __init__(self,
@@ -140,23 +183,85 @@ class Message(BaseModelCompatibleDict):
                  content: Union[str, List[ContentItem]],
                  reasoning_content: Optional[Union[str, List[ContentItem]]] = None,
                  name: Optional[str] = None,
-                 function_call: Optional[FunctionCall] = None,
+                 function_call: Optional[Union[FunctionCall, dict]] = None,
+                 tool_calls: Optional[List[Union[ToolCall, dict]]] = None,
+                 tool_call_id: Optional[str] = None,
                  extra: Optional[dict] = None,
                  **kwargs):
         if content is None:
             content = ''
+        # Accept legacy dumps / kwargs that still carry function_call.
+        if function_call is None and 'function_call' in kwargs:
+            function_call = kwargs.pop('function_call')
+        if tool_calls is None and 'tool_calls' in kwargs:
+            tool_calls = kwargs.pop('tool_calls')
+        if tool_call_id is None and 'tool_call_id' in kwargs:
+            tool_call_id = kwargs.pop('tool_call_id')
+
+        normalized = _normalize_tool_calls(
+            tool_calls=tool_calls,
+            function_call=function_call,
+            extra=extra,
+        )
         super().__init__(role=role,
                          content=content,
                          reasoning_content=reasoning_content,
                          name=name,
-                         function_call=function_call,
-                         extra=extra)
+                         tool_calls=normalized,
+                         tool_call_id=tool_call_id,
+                         extra=extra,
+                         **kwargs)
 
     def __repr__(self):
         return f'Message({self.model_dump()})'
 
+    @property
+    def function_call(self) -> Optional[FunctionCall]:
+        if self.tool_calls:
+            return self.tool_calls[0].function
+        return None
+
     @field_validator('role')
     def role_checker(cls, value: str) -> str:
-        if value not in [USER, ASSISTANT, SYSTEM, FUNCTION]:
-            raise ValueError(f'{value} must be one of {",".join([USER, ASSISTANT, SYSTEM, FUNCTION])}')
+        if value not in _VALID_ROLES:
+            raise ValueError(f'{value} must be one of {",".join(_VALID_ROLES)}')
         return value
+
+
+def _normalize_tool_calls(
+    *,
+    tool_calls: Optional[List[Any]],
+    function_call: Optional[Any],
+    extra: Optional[dict],
+) -> Optional[List[ToolCall]]:
+    if tool_calls is not None:
+        out: List[ToolCall] = []
+        for i, tc in enumerate(tool_calls):
+            if isinstance(tc, ToolCall):
+                if not tc.id:
+                    tc.id = generate_tool_call_id()
+                out.append(tc)
+            elif isinstance(tc, dict):
+                fn = tc.get('function') or {}
+                out.append(ToolCall(
+                    id=tc.get('id') or generate_tool_call_id(),
+                    type=tc.get('type') or 'function',
+                    function=fn if isinstance(fn, FunctionCall) else FunctionCall(
+                        name=(fn.get('name') if isinstance(fn, dict) else '') or '',
+                        arguments=(fn.get('arguments') if isinstance(fn, dict) else '') or '',
+                    ),
+                ))
+            else:
+                raise TypeError(f'Unsupported tool_calls entry: {type(tc)!r}')
+        return out or None
+
+    if function_call is not None:
+        if isinstance(function_call, dict):
+            function_call = FunctionCall(
+                name=function_call.get('name') or '',
+                arguments=function_call.get('arguments') or '',
+            )
+        tc_id = (extra or {}).get('function_id') if isinstance(extra, dict) else None
+        return [ToolCall(id=tc_id or generate_tool_call_id(), function=function_call)]
+
+    return None

@@ -511,10 +511,19 @@ Full template: [`.env.example`](.env.example).
 | `Assistant` | Function-calling agent (most common) |
 | `FnCallAgent` | Lower-level tool loop |
 | `ReActChat` | ReAct-style reasoning |
-| `DocQAAgent` | Document Q&A with retrieval |
+| `DocQAAgent` | Document Q&A with retrieval (`BasicDocQA`) |
+| `ParallelDocQA` | Exhaustive per-chunk doc QA (high recall, high cost; see below) |
 | `GroupChat` | Multi-agent round-robin or auto-router |
 | `Router` | Route queries to specialised agents |
 | `GraphAgent` | Compiled DAG from `StateGraph` |
+
+### ParallelDocQA vs Assistant + retrieval
+
+`Assistant` with `retrieval` asks the model to call search and answers from top-k snippets — cheap and usually enough.
+
+`ParallelDocQA` LLM-scans **every document chunk** in parallel, keeps passages that claim to answer, then runs GenKeyword + retrieval + a summary pass. That raises recall on long corpora and **costs one member LLM call per chunk** (default hard cap `max_chunks=32`; over-budget sets fail with the chunk count and limit). Use `estimate_member_calls(messages)` before spending.
+
+Example: [`examples/parallel_doc_qa/`](examples/parallel_doc_qa/).
 
 ### Tools
 
@@ -535,6 +544,8 @@ def my_tool(query: str) -> str:
 
 Network tools (`web_search`, `image_search`, `web_extractor`) are **opt-in** — not in the default registry. Enable with `enable_optional_tools(...)`. Blocked when `CAT_AGENT_OFFLINE=1`.
 
+Tool schemas on the wire are OpenAI JSON Schema objects (`parameters.type == "object"`). Older list-style parameter declarations (e.g. hub tools) are converted automatically when exported.
+
 ### Async API
 
 | Sync | Async |
@@ -543,6 +554,8 @@ Network tools (`web_search`, `image_search`, `web_extractor`) are **opt-in** —
 | `run_nonstream` | `arun_nonstream` |
 
 The async path does **not** stream tokens — it yields complete message lists. Multiple tool calls in one turn run concurrently via `asyncio.gather`. Use `arun` from FastAPI/Jupyter; calling sync `run()` inside a running event loop blocks and emits a warning.
+
+Wire and dict yields use **`tool_calls`** as the canonical field (not a derived `function_call` key). In-process code can still read `Message.function_call` for the first call.
 
 ### RAG search backends
 
@@ -621,14 +634,19 @@ Enable trace logging: `CAT_AGENT_TRACE=1`. Langfuse example: [`examples/langfuse
 
 ### LLM backends
 
-| Backend | `model_type` | Extra |
-| --- | --- | --- |
-| OpenAI-compatible | `oai` | base install |
-| Transformers | `transformers` | `[transformers]` |
-| LlamaCpp | `llama_cpp` | `[llama]` |
-| LlamaCpp Vision | `llama_cpp_vision` | `[llama]` |
-| MLX-LM | `mlx_lm` | `[mlx]` |
-| OpenVINO | `openvino` | base install |
+| Backend | `model_type` | Extra | Tool calling |
+| --- | --- | --- | --- |
+| OpenAI-compatible | `oai` | base install | Native `tools` / `tool_calls` on the wire |
+| Transformers | `transformers` | `[transformers]` | Prompt path (Nous `<tool_call>` markup) |
+| LlamaCpp | `llama_cpp` | `[llama]` | Prompt path |
+| LlamaCpp Vision | `llama_cpp_vision` | `[llama]` | Prompt path |
+| MLX-LM | `mlx_lm` | `[mlx]` | Prompt path |
+
+Serve local Qwen (or any tools-capable model) through Ollama / vLLM / llama.cpp **server** with `model_type: oai` to get the native path. Both paths keep every tool call the model emits in one turn — there is no single-call trim.
+
+`parallel_tool_calls` is **not** injected by the oai backend; leave it unset unless your gateway needs an explicit value (OpenAI allows parallel by default when the key is absent; some models reject the parameter entirely).
+
+Live check against any OpenAI-compatible endpoint: [`examples/native_parallel/`](examples/native_parallel/).
 
 ---
 
@@ -1042,6 +1060,7 @@ Run from repo root after installing matching extras.
 | [`scheduling/`](examples/scheduling/) | Report jobs (local + deploy) |
 | [`graph/`](examples/graph/) | DAG workflow (`StateGraph`) |
 | [`async_agent/`](examples/async_agent/) | `arun` + parallel tools |
+| [`native_parallel/`](examples/native_parallel/) | Live multi `tool_calls` against an OAI endpoint |
 | [`synthesis/from_draft/`](examples/synthesis/from_draft/) | Markdown → sandboxed tool |
 | [`synthesis/from_spec/`](examples/synthesis/from_spec/) | JSON ToolSpec → ToolSmith |
 | [`synthesis/promote/`](examples/synthesis/promote/) | Offline promote / share / adopt |
@@ -1050,6 +1069,7 @@ Run from repo root after installing matching extras.
 | [`rag_native/`](examples/rag_native/) | Chunking + vector + truncation |
 | [`long_term_memory/`](examples/long_term_memory/) | Cross-session memory |
 | [`doc_parser_agent/`](examples/doc_parser_agent/) | Document Q&A |
+| [`parallel_doc_qa/`](examples/parallel_doc_qa/) | Exhaustive per-chunk ParallelDocQA |
 | [`observability/`](examples/observability/) | Trace handlers |
 | [`langfuse/`](examples/langfuse/) | OpenTelemetry → Langfuse UI |
 | [`llama_cpp_math_guy/`](examples/llama_cpp_math_guy/) | Local GGUF + tools |
@@ -1073,7 +1093,7 @@ Run from repo root after installing matching extras.
 | `cat_agent.agents` | Assistant, ReActChat, FnCallAgent, DocQA, GroupChat, Router |
 | `cat_agent.multi_agent` | Blackboard, handoff, team tools |
 | `cat_agent.graph` | `StateGraph` / `GraphAgent` DAG engine |
-| `cat_agent.llm` | Chat backends (OAI, LlamaCpp, Transformers, MLX, OpenVINO) |
+| `cat_agent.llm` | Chat backends (OAI, LlamaCpp, Transformers, MLX) |
 | `cat_agent.tools` | `@tool`, RAG, DocParser, Storage, MCP, code interpreter |
 | `cat_agent.memory` | Long-term encrypted memory |
 | `cat_agent.scheduling` | Report jobs, channels, runner |
@@ -1113,7 +1133,7 @@ Wheels built for **abi3 Python 3.10+** on Linux (x86_64, aarch64), macOS arm64, 
 
 ```bash
 chmod +x release.sh
-./release.sh 0.9.0
+./release.sh 0.10.1
 ```
 
 ---

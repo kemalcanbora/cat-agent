@@ -213,14 +213,16 @@ async def test_run_and_arun_same_output():
                     'role': m['role'],
                     'content': m.get('content'),
                     'name': m.get('name'),
-                    'function_call': m.get('function_call'),
+                    'tool_calls': m.get('tool_calls'),
                 })
             else:
                 out.append({
                     'role': m.role,
                     'content': m.content,
                     'name': m.name,
-                    'function_call': m.function_call.model_dump() if m.function_call else None,
+                    'tool_calls': (
+                        [tc.model_dump() for tc in m.tool_calls] if m.tool_calls else None
+                    ),
                 })
         return out
 

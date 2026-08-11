@@ -5,20 +5,67 @@ use std::collections::HashMap;
 
 use crate::qwen_tokenizer::{count_qwen_tokens, truncate_qwen_text};
 
+/// Truncation carries structured tool-call fields alongside `text`.
+/// `text` is used only for token estimation and may be omitted/truncated;
+/// structured JSON fields survive the round-trip.
 #[derive(Clone, Debug)]
 pub(crate) struct NativeMessage {
     role: String,
     text: String,
     name: Option<String>,
+    text_baseline: Option<String>,
+    content_json: Option<String>,
+    function_call_json: Option<String>,
+    tool_calls_json: Option<String>,
+    tool_call_id: Option<String>,
+    extra_json: Option<String>,
+    reasoning_content_json: Option<String>,
 }
 
-#[derive(Clone, Debug)]
-struct IndexedMessage {
-    index: usize,
-    message: NativeMessage,
+impl NativeMessage {
+    fn with_text(&self, text: String) -> Self {
+        Self {
+            text,
+            ..self.clone()
+        }
+    }
+}
+
+fn opt_json_field(dict: &Bound<'_, PyDict>, key: &str, py: Python<'_>) -> PyResult<Option<String>> {
+    let Some(value) = dict.get_item(key)? else {
+        return Ok(None);
+    };
+    if value.is_none() {
+        return Ok(None);
+    }
+    // Always JSON-encode so dict/list/str round-trip uniformly through loads().
+    let json = py.import("json")?;
+    let dumped: String = json.call_method1("dumps", (value,))?.extract()?;
+    Ok(Some(dumped))
+}
+
+fn set_json_field(
+    dict: &Bound<'_, PyDict>,
+    key: &str,
+    raw: &Option<String>,
+    py: Python<'_>,
+    as_json: bool,
+) -> PyResult<()> {
+    let Some(value) = raw else {
+        return Ok(());
+    };
+    if as_json {
+        let json = py.import("json")?;
+        let obj = json.call_method1("loads", (value,))?;
+        dict.set_item(key, obj)?;
+    } else {
+        dict.set_item(key, value)?;
+    }
+    Ok(())
 }
 
 fn parse_messages(messages: &Bound<'_, PyAny>) -> PyResult<Vec<NativeMessage>> {
+    let py = messages.py();
     let list = messages.cast::<PyList>()?;
     let mut parsed = Vec::with_capacity(list.len());
     for item in list.iter() {
@@ -34,7 +81,52 @@ fn parse_messages(messages: &Bound<'_, PyAny>) -> PyResult<Vec<NativeMessage>> {
         let name: Option<String> = dict
             .get_item("name")?
             .and_then(|value| value.extract().ok());
-        parsed.push(NativeMessage { role, text, name });
+        let text_baseline: Option<String> = dict
+            .get_item("text_baseline")?
+            .and_then(|value| value.extract().ok());
+        // content may be str or list/dict — always store as JSON when non-string
+        let content_json = match dict.get_item("content")? {
+            None => None,
+            Some(value) if value.is_none() => None,
+            Some(value) => {
+                if let Ok(s) = value.extract::<String>() {
+                    Some(serde_json::to_string(&s).unwrap_or(s))
+                } else {
+                    let json = py.import("json")?;
+                    Some(json.call_method1("dumps", (value,))?.extract()?)
+                }
+            }
+        };
+        let function_call_json = opt_json_field(dict, "function_call", py)?;
+        let tool_calls_json = opt_json_field(dict, "tool_calls", py)?;
+        let tool_call_id: Option<String> = dict
+            .get_item("tool_call_id")?
+            .and_then(|value| value.extract().ok());
+        let extra_json = opt_json_field(dict, "extra", py)?;
+        let reasoning_content_json = match dict.get_item("reasoning_content")? {
+            None => None,
+            Some(value) if value.is_none() => None,
+            Some(value) => {
+                if let Ok(s) = value.extract::<String>() {
+                    Some(serde_json::to_string(&s).unwrap_or(s))
+                } else {
+                    let json = py.import("json")?;
+                    Some(json.call_method1("dumps", (value,))?.extract()?)
+                }
+            }
+        };
+        parsed.push(NativeMessage {
+            role,
+            text,
+            name,
+            text_baseline,
+            content_json,
+            function_call_json,
+            tool_calls_json,
+            tool_call_id,
+            extra_json,
+            reasoning_content_json,
+        });
     }
     Ok(parsed)
 }
@@ -63,7 +155,7 @@ fn split_turn_into_steps(indexed_messages: &[IndexedMessage]) -> Vec<Vec<Indexed
                 }
                 steps.push(vec![indexed.clone()]);
             }
-            "function" => {
+            "function" | "tool" => {
                 if let Some(last_step) = steps.last_mut() {
                     last_step.push(indexed.clone());
                 } else {
@@ -74,6 +166,12 @@ fn split_turn_into_steps(indexed_messages: &[IndexedMessage]) -> Vec<Vec<Indexed
         }
     }
     steps
+}
+
+#[derive(Clone, Debug)]
+struct IndexedMessage {
+    index: usize,
+    message: NativeMessage,
 }
 
 fn truncate_turn(
@@ -97,14 +195,7 @@ fn truncate_turn(
             token_count.saturating_sub(exceedance),
             true,
         )?;
-        return Ok((
-            vec![NativeMessage {
-                role: item.message.role.clone(),
-                text,
-                name: item.message.name.clone(),
-            }],
-            0,
-        ));
+        return Ok((vec![item.message.with_text(text)], 0));
     }
 
     let mut indexed_messages = indexed_messages;
@@ -119,7 +210,9 @@ fn truncate_turn(
         if exceedance == 0 {
             break;
         }
-        if item.message.role != "function" || (is_last_turn && item.index >= last_step_idx) {
+        if (item.message.role != "function" && item.message.role != "tool")
+            || (is_last_turn && item.index >= last_step_idx)
+        {
             continue;
         }
         let token_count = message_tokens.get(&item.index).copied().unwrap_or(0);
@@ -130,6 +223,7 @@ fn truncate_turn(
             exceedance = 0;
             break;
         }
+        // Omit body only — role, name, function_id (extra) stay on the message.
         item.message.text = "omit".to_string();
         message_tokens.insert(item.index, 0);
         exceedance -= token_count;
@@ -189,7 +283,7 @@ fn truncate_turn(
     if let Some(last_step) = messages_per_step.last() {
         for item in last_step {
             let mut message = item.message.clone();
-            if message.role == "function" {
+            if message.role == "function" || message.role == "tool" {
                 let token_count = message_tokens.get(&item.index).copied().unwrap_or(0);
                 if token_count > exceedance {
                     message.text =
@@ -319,6 +413,24 @@ pub fn truncate_messages_py<'py>(
         if let Some(name) = message.name {
             dict.set_item("name", name)?;
         }
+        if let Some(baseline) = message.text_baseline {
+            dict.set_item("text_baseline", baseline)?;
+        }
+        // content / reasoning were stored via serde_json for strings, or json.dumps otherwise.
+        set_json_field(&dict, "content", &message.content_json, py, true)?;
+        set_json_field(&dict, "function_call", &message.function_call_json, py, true)?;
+        set_json_field(&dict, "tool_calls", &message.tool_calls_json, py, true)?;
+        if let Some(tool_call_id) = message.tool_call_id {
+            dict.set_item("tool_call_id", tool_call_id)?;
+        }
+        set_json_field(&dict, "extra", &message.extra_json, py, true)?;
+        set_json_field(
+            &dict,
+            "reasoning_content",
+            &message.reasoning_content_json,
+            py,
+            true,
+        )?;
         list.append(dict)?;
     }
     Ok(list)

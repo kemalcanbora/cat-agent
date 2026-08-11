@@ -211,9 +211,21 @@ def _print_result(result) -> None:
         role = msg.get('role') if isinstance(msg, dict) else msg.role
         name = msg.get('name') if isinstance(msg, dict) else msg.name
         content = msg.get('content') if isinstance(msg, dict) else msg.content
-        fc = msg.get('function_call') if isinstance(msg, dict) else (
-            msg.function_call.model_dump() if getattr(msg, 'function_call', None) else None
-        )
+        if isinstance(msg, dict):
+            tcs = msg.get('tool_calls')
+            fc = None
+            if tcs:
+                fc = [
+                    (tc.get('function') if isinstance(tc, dict) else None)
+                    for tc in tcs
+                ]
+            elif msg.get('function_call'):
+                fc = [msg.get('function_call')]
+        else:
+            fc = (
+                [tc.function.model_dump() for tc in msg.tool_calls]
+                if getattr(msg, 'tool_calls', None) else None
+            )
         if fc:
             print(f'[{role}] tool_call → {fc}')
         elif role == 'function':

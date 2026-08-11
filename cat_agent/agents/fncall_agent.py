@@ -109,18 +109,19 @@ class FnCallAgent(Agent):
                 response.extend(output)
                 messages.extend(output)
                 used_any_tool = False
-                for out in output:
-                    use_tool, tool_name, tool_args, _ = self._detect_tool(out)
-                    if use_tool:
-                        tool_result = self._call_tool(tool_name, tool_args, messages=messages, **kwargs)
-                        fn_msg = Message(role=FUNCTION,
-                                         name=tool_name,
-                                         content=tool_result,
-                                         extra={'function_id': out.extra.get('function_id', '1')})
-                        messages.append(fn_msg)
-                        response.append(fn_msg)
-                        yield response
-                        used_any_tool = True
+                for _src, tc_id, tool_name, tool_args in self._iter_tool_call_jobs(output):
+                    tool_result = self._call_tool(tool_name, tool_args, messages=messages, **kwargs)
+                    fn_msg = Message(
+                        role=FUNCTION,
+                        name=tool_name,
+                        content=tool_result,
+                        tool_call_id=tc_id,
+                        extra={'function_id': tc_id},
+                    )
+                    messages.append(fn_msg)
+                    response.append(fn_msg)
+                    yield response
+                    used_any_tool = True
                 if not used_any_tool:
                     break
         yield response
@@ -149,11 +150,10 @@ class FnCallAgent(Agent):
                 messages.extend(output)
                 yield list(response)
 
-                tool_jobs = []
-                for out in output:
-                    use_tool, tool_name, tool_args, _ = self._detect_tool(out)
-                    if use_tool:
-                        tool_jobs.append((out, tool_name, tool_args))
+                tool_jobs = [
+                    (tc_id, tool_name, tool_args)
+                    for _src, tc_id, tool_name, tool_args in self._iter_tool_call_jobs(output)
+                ]
 
                 if not tool_jobs:
                     break
@@ -173,7 +173,7 @@ class FnCallAgent(Agent):
                     raise
 
                 hard_errors: List[BaseException] = []
-                for (out, tool_name, _), result in zip(tool_jobs, results):
+                for (tc_id, tool_name, _), result in zip(tool_jobs, results):
                     if isinstance(result, asyncio.CancelledError):
                         raise result
                     if isinstance(result, (ToolServiceError, DocParserError)):
@@ -191,7 +191,8 @@ class FnCallAgent(Agent):
                         role=FUNCTION,
                         name=tool_name,
                         content=result,
-                        extra={'function_id': out.extra.get('function_id', '1') if out.extra else '1'},
+                        tool_call_id=tc_id,
+                        extra={'function_id': tc_id},
                     )
                     messages.append(fn_msg)
                     response.append(fn_msg)

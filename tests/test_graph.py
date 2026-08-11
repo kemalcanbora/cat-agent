@@ -12,11 +12,9 @@ from cat_agent.graph import (
     GraphAgent,
     GraphState,
     StateGraph,
-    ToolNode,
 )
-from cat_agent.llm.schema import ASSISTANT, FUNCTION, USER, Message
+from cat_agent.llm.schema import ASSISTANT, USER, Message
 from cat_agent.observability.events import EventEnvelope
-from cat_agent.tools.base import BaseTool
 
 
 class _CollectingHandler:
@@ -36,17 +34,6 @@ class EchoAgent(Agent):
 
     def _run(self, messages: List[Message], lang: str = "en", **kwargs) -> Iterator[List[Message]]:
         yield [Message(role=ASSISTANT, content=self._reply, name=self.name)]
-
-
-class _UpperTool(BaseTool):
-    name = "upper"
-    description = "Uppercase the given text."
-    parameters = [{"name": "text", "type": "string", "required": True}]
-
-    def call(self, params, **kwargs):
-        import json
-        data = json.loads(params) if isinstance(params, str) else params
-        return data.get("text", "").upper()
 
 
 def _user(text: str) -> List[Message]:
@@ -158,19 +145,6 @@ class TestExecution:
         app = g.compile(name="g")
         list(app.run(_user("go")))
         # Reach via internal run to confirm it stopped at 3 (no exception).
-
-    def test_tool_node(self):
-        def args(state: GraphState):
-            return {"text": "hello"}
-
-        g = (StateGraph()
-             .add_node(ToolNode("up", "upper", args_from=args))
-             .set_entry("up")
-             .add_edge("up", END))
-        app = g.compile(name="g", function_list=[_UpperTool()])
-        out = app.run_nonstream(_user("anything"))
-        assert out[-1]["role"] == FUNCTION
-        assert out[-1]["content"] == "HELLO"
 
     def test_streaming_yields_multiple_chunks(self):
         g = (StateGraph()

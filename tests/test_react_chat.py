@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
-from cat_agent.llm.schema import USER, Message
+from cat_agent.llm.schema import ASSISTANT, USER, Message
 from cat_agent.agents.react_chat import ReActChat, TOOL_DESC, PROMPT_REACT
 
 
@@ -85,7 +85,6 @@ class TestReActChatPrependReactPrompt:
         mock_llm = MagicMock()
         mock_llm.model = "gpt-4"
         mock_llm.model_type = "openai"
-        # Use a stable default-registry tool so _init_tool accepts it
         tool_name = 'storage'
         assert tool_name in TOOL_REGISTRY
         with patch("cat_agent.agents.fncall_agent.Memory", return_value=MagicMock()):
@@ -99,3 +98,45 @@ class TestReActChatPrependReactPrompt:
         assert "What is Python?" in content
         assert "Thought:" in content
         assert "Action:" in content
+
+
+class _ReActFakeLLM:
+    """First turn: Action; second turn: Final Answer."""
+
+    def __init__(self):
+        self.model = 'fake'
+        self.model_type = 'fake'
+        self.calls = 0
+
+    def chat(self, messages, functions=None, stream=True, delta_stream=False, extra_generate_cfg=None):
+        self.calls += 1
+        if self.calls == 1:
+            content = (
+                'I need storage.\n'
+                'Action: storage\n'
+                'Action Input: {"operate": "get", "key": "k"}'
+            )
+        else:
+            content = 'Final Answer: VALUE_FROM_TOOL'
+        out = [Message(role=ASSISTANT, content=content)]
+        if stream:
+            return iter([out])
+        return out
+
+
+class TestReActChatRunE2E:
+
+    def test_thought_action_loop_calls_tool_and_yields_final(self):
+        fake = _ReActFakeLLM()
+        with patch('cat_agent.agents.fncall_agent.Memory', return_value=MagicMock()):
+            agent = ReActChat(llm=fake, function_list=['storage'], system_message='')
+
+        with patch.object(agent, '_call_tool', return_value='TOOL_OBS_MARKER') as call_tool:
+            out = list(agent.run([Message(USER, 'Get key k')]))
+
+        assert out, 'ReActChat._run must yield responses'
+        call_tool.assert_called()
+        assert call_tool.call_args[0][0] == 'storage'
+        final = out[-1][-1].content
+        assert 'TOOL_OBS_MARKER' in final or 'Final Answer' in final or 'VALUE_FROM_TOOL' in final
+        assert fake.calls >= 2

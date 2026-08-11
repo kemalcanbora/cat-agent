@@ -72,6 +72,9 @@ class LlamaCpp(BaseFnCallModel):
 
         logger.info(f"Loading llama.cpp model from: {resolved}")
         self.llm = Llama(model_path=resolved, **llama_kwargs)
+        # Prompt-based tool calling via BaseFnCallModel / fncall_prompts.
+        # llama.cpp has since gained native function-calling handlers; wiring those
+        # through supports_native_tools is a follow-up, not a permanent design.
         self._supports_function_calling = True
         # Expose a stable model id for observability (BaseChatModel.model is often empty).
         if not self.model:
@@ -87,6 +90,11 @@ class LlamaCpp(BaseFnCallModel):
 
     @property
     def support_audio_input(self) -> bool:
+        return False
+
+    @property
+    def supports_native_tools(self) -> bool:
+        # Stays on the prompt path. Native llama.cpp tool handlers are a follow-up.
         return False
 
     def _convert_messages(self, messages: List[Union[Message, Dict]]) -> List[Dict]:

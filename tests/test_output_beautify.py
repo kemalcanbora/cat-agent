@@ -41,7 +41,23 @@ class TestOutputBeautify:
         assert ANSWER_S in out
         assert "Done." in out
 
-    def test_typewriter_print_function_call(self):
+    def test_typewriter_print_tool_calls(self):
+        msgs = [
+            {
+                'role': ASSISTANT,
+                'tool_calls': [{
+                    'id': 'c1',
+                    'type': 'function',
+                    'function': {'name': 'get_weather', 'arguments': '{"city": "NYC"}'},
+                }],
+            },
+        ]
+        out = typewriter_print(msgs, "")
+        assert TOOL_CALL_S in out
+        assert "get_weather" in out
+        assert "NYC" in out
+
+    def test_typewriter_print_legacy_function_call_dict(self):
         msgs = [
             {"role": ASSISTANT, "function_call": {"name": "get_weather", "arguments": '{"city": "NYC"}'}},
         ]

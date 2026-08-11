@@ -18,7 +18,6 @@ from .group_chat_auto_router import GroupChatAutoRouter
 from .react_chat import ReActChat
 from .router import Router
 from .user_agent import UserAgent
-from .virtual_memory_agent import VirtualMemoryAgent
 
 __all__ = [
     'Agent',
@@ -37,5 +36,4 @@ __all__ = [
     'GroupChat',
     'GroupChatAutoRouter',
     'FnCallAgent',
-    'VirtualMemoryAgent',
 ]

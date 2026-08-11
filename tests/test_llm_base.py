@@ -111,6 +111,14 @@ class TestBaseChatModel:
             m = _ConcreteChatModel(cfg={"generate_cfg": {"use_raw_api": False}})
         assert m.use_raw_api is False
 
+    def test_init_use_raw_api_defaults_false_without_native_capability(self):
+        import os
+        env = {k: v for k, v in os.environ.items() if k != "CAT_AGENT_USE_RAW_API"}
+        with patch.dict(os.environ, env, clear=True):
+            m = _ConcreteChatModel(cfg={})
+        assert m.supports_native_tools is False
+        assert m.use_raw_api is False
+
     def test_quick_chat_returns_text(self):
         m = _ConcreteChatModel(cfg={})
         out = m.quick_chat("Hello")

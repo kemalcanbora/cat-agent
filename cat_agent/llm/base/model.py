@@ -79,6 +79,16 @@ class BaseChatModel(ABC):
     def support_audio_input(self) -> bool:
         return False
 
+    @property
+    def supports_native_tools(self) -> bool:
+        """Whether this backend can declare tools on the wire (OpenAI-style).
+
+        When True and ``use_raw_api`` is enabled (the default for such backends),
+        function schemas are sent as ``tools`` and responses are read from
+        ``tool_calls``. When False, the prompt-based ``fncall_prompts`` path is used.
+        """
+        return False
+
     def __init__(self, cfg: Optional[Dict] = None):
         cfg = cfg or {}
         self.model = cfg.get('model', '').strip()
@@ -88,9 +98,13 @@ class BaseChatModel(ABC):
         self.generate_cfg = generate_cfg
         self.model_type = cfg.get('model_type', '')
 
-        self.use_raw_api = os.getenv('CAT_AGENT_USE_RAW_API', 'false').lower() == 'true'
+        # Preference order: explicit generate_cfg → env → capability default.
         if 'use_raw_api' in generate_cfg:
-            self.use_raw_api = generate_cfg.pop('use_raw_api')
+            self.use_raw_api = bool(generate_cfg.pop('use_raw_api'))
+        elif (env_raw := os.getenv('CAT_AGENT_USE_RAW_API')) is not None:
+            self.use_raw_api = env_raw.lower() == 'true'
+        else:
+            self.use_raw_api = bool(self.supports_native_tools)
 
         if cache_dir:
             try:
@@ -285,12 +299,12 @@ class BaseChatModel(ABC):
             messages = [format_as_text_message(msg, add_upload_info=False) for msg in messages]
 
         if self.use_raw_api:
-            logger.debug('`use_raw_api` takes effect.')
-            assert stream and (not delta_stream), '`use_raw_api` only support full stream!!!'
+            logger.debug('`use_raw_api` takes effect (native tools path).')
+            assert not delta_stream, '`use_raw_api` does not support delta_stream=True'
             return self.raw_chat(messages=messages, functions=functions, stream=stream, generate_cfg=generate_cfg)
 
         if not fncall_mode:
-            for k in ('parallel_function_calls', 'function_choice', 'thought_in_content'):
+            for k in ('function_choice', 'thought_in_content'):
                 generate_cfg.pop(k, None)
 
         # Dispatch
@@ -424,18 +438,26 @@ class BaseChatModel(ABC):
     # ------------------------------------------------------------------
 
     def raw_chat(self, messages, functions=None, stream=True, generate_cfg=None):
+        generate_cfg = generate_cfg or {}
         if functions and functions[0].get('type') != 'function':
             functions = [{'type': 'function', 'function': f} for f in functions]
         if functions:
             generate_cfg['tools'] = functions
         if stream:
             return self._chat_stream(messages=messages, delta_stream=False, generate_cfg=generate_cfg)
+        return self._chat_no_stream(messages=messages, generate_cfg=generate_cfg)
 
     @staticmethod
     def _conv_cat_agent_messages_to_oai(messages):
+        """Convert internal messages to OpenAI chat wire format.
+
+        Emits ``tool_calls`` on assistant turns and ``role: tool`` results with
+        ``tool_call_id``. Internal-only keys (e.g. ``extra``) are stripped.
+        """
         new_messages = []
         for msg in messages:
-            if msg['role'] == ASSISTANT:
+            role = msg['role']
+            if role == ASSISTANT:
                 if (not new_messages) or new_messages[-1]['role'] != ASSISTANT:
                     # Always include content — Ollama/OpenAI reject missing/null content.
                     new_messages.append({'role': ASSISTANT, 'content': ''})
@@ -445,28 +467,58 @@ class BaseChatModel(ABC):
                     new_messages[-1].setdefault('content', '')
                 if msg.get('reasoning_content'):
                     new_messages[-1]['reasoning_content'] = msg['reasoning_content']
-                if msg.get('function_call'):
+                wire_calls = msg.get('tool_calls')
+                if wire_calls:
+                    if not new_messages[-1].get('tool_calls'):
+                        new_messages[-1]['tool_calls'] = []
+                    for tc in wire_calls:
+                        if isinstance(tc, dict):
+                            fn = tc.get('function') or {}
+                            new_messages[-1]['tool_calls'].append({
+                                'id': tc.get('id') or '1',
+                                'type': tc.get('type') or 'function',
+                                'function': {
+                                    'name': fn.get('name', ''),
+                                    'arguments': fn.get('arguments', ''),
+                                },
+                            })
+                        else:
+                            new_messages[-1]['tool_calls'].append(tc)
+                elif msg.get('function_call'):
                     if not new_messages[-1].get('tool_calls'):
                         new_messages[-1]['tool_calls'] = []
                     new_messages[-1]['tool_calls'].append({
-                        'id': msg.get('extra', {}).get('function_id', '1'),
+                        'id': (msg.get('extra') or {}).get('function_id', '1'),
                         'type': 'function',
                         'function': {
                             'name': msg['function_call']['name'],
                             'arguments': msg['function_call']['arguments'],
                         }
                     })
-            elif msg['role'] == FUNCTION:
-                new_msg = copy.deepcopy(msg)
-                new_msg['role'] = 'tool'
-                new_msg['id'] = msg.get('extra', {}).get('function_id', '1')
-                if new_msg.get('content') is None:
-                    new_msg['content'] = ''
-                new_messages.append(new_msg)
+            elif role in (FUNCTION, 'tool'):
+                content = msg.get('content')
+                if content is None:
+                    content = ''
+                tool_call_id = (
+                    msg.get('tool_call_id')
+                    or (msg.get('extra') or {}).get('function_id')
+                    or '1'
+                )
+                tool_msg = {
+                    'role': 'tool',
+                    'tool_call_id': tool_call_id,
+                    'content': content,
+                }
+                if msg.get('name'):
+                    tool_msg['name'] = msg['name']
+                new_messages.append(tool_msg)
             else:
-                cleaned = dict(msg)
-                if cleaned.get('content') is None:
-                    cleaned['content'] = ''
+                cleaned = {
+                    'role': role,
+                    'content': '' if msg.get('content') is None else msg['content'],
+                }
+                if msg.get('name'):
+                    cleaned['name'] = msg['name']
                 new_messages.append(cleaned)
         return new_messages
 
@@ -483,17 +535,28 @@ class BaseChatModel(ABC):
                     m['role'] = 'function'
                     out.append(m)
                 elif msg['role'] == 'assistant':
-                    if msg['content']:
-                        out.append({'role': 'assistant', 'content': msg['content']})
-                    if msg.get('reasoning_content', ''):
-                        out.append({'role': 'assistant', 'content': '', 'reasoning_content': msg['reasoning_content']})
+                    entry = {'role': 'assistant', 'content': msg.get('content') or ''}
                     if msg.get('tool_calls'):
-                        for tc in msg['tool_calls']:
-                            out.append({
-                                'role': 'assistant', 'content': '',
-                                'function_call': {'name': tc['function']['name'],
-                                                  'arguments': tc['function']['arguments']},
-                            })
+                        entry['tool_calls'] = msg['tool_calls']
+                    elif msg.get('function_call'):
+                        # Inbound legacy: normalise to tool_calls before chat().
+                        fc = msg['function_call']
+                        entry['tool_calls'] = [{
+                            'id': (msg.get('extra') or {}).get('function_id') or '1',
+                            'type': 'function',
+                            'function': fc if isinstance(fc, dict) else {
+                                'name': getattr(fc, 'name', ''),
+                                'arguments': getattr(fc, 'arguments', ''),
+                            },
+                        }]
+                    if msg.get('content') or entry.get('tool_calls'):
+                        out.append(entry)
+                    if msg.get('reasoning_content', ''):
+                        out.append({
+                            'role': 'assistant',
+                            'content': '',
+                            'reasoning_content': msg['reasoning_content'],
+                        })
             return out
 
         def _to_oai(data):
@@ -504,12 +567,41 @@ class BaseChatModel(ABC):
                     message['reasoning_content'] += item['reasoning_content']
                 if item.get('content'):
                     message['content'] += item['content']
-                if item.get('function_call'):
+                if item.get('tool_calls'):
+                    for tc in item['tool_calls']:
+                        if isinstance(tc, dict):
+                            fn = tc.get('function') or {}
+                            message['tool_calls'].append({
+                                'id': tc.get('id') or f"{len(message['tool_calls']) + 1}",
+                                'type': tc.get('type') or 'function',
+                                'function': fn if isinstance(fn, dict) else {
+                                    'name': getattr(fn, 'name', ''),
+                                    'arguments': getattr(fn, 'arguments', ''),
+                                },
+                            })
+                        else:
+                            fn = getattr(tc, 'function', None)
+                            message['tool_calls'].append({
+                                'id': getattr(tc, 'id', None) or f"{len(message['tool_calls']) + 1}",
+                                'type': getattr(tc, 'type', None) or 'function',
+                                'function': {
+                                    'name': getattr(fn, 'name', '') if fn is not None else '',
+                                    'arguments': getattr(fn, 'arguments', '') if fn is not None else '',
+                                },
+                            })
+                elif item.get('function_call'):
+                    extra = item.get('extra') if hasattr(item, 'get') else getattr(item, 'extra', None)
+                    extra = extra or {}
+                    tc_id = extra.get('function_id') or f"{len(message['tool_calls']) + 1}"
+                    fc = item['function_call']
+                    if isinstance(fc, dict):
+                        name, arguments = fc.get('name', ''), fc.get('arguments', '')
+                    else:
+                        name, arguments = getattr(fc, 'name', ''), getattr(fc, 'arguments', '')
                     message['tool_calls'].append({
-                        'id': f"{len(message['tool_calls']) + 1}",
+                        'id': tc_id,
                         'type': 'function',
-                        'function': {'name': item['function_call']['name'],
-                                     'arguments': item['function_call']['arguments']},
+                        'function': {'name': name, 'arguments': arguments},
                     })
                 extra = item.get('extra') if hasattr(item, 'get') else getattr(item, 'extra', None)
                 if isinstance(extra, dict) and extra.get('usage'):

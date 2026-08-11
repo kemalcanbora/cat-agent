@@ -28,12 +28,3 @@ class TestBaseFnCallPrompt:
                 lang="en",
                 function_choice="none",
             )
-
-    def test_format_plaintext_train_samples_raises_via_preprocess(self):
-        base = BaseFnCallPrompt()
-        with pytest.raises(NotImplementedError):
-            base.format_plaintext_train_samples(
-                messages=[Message(USER, "Hi")],
-                functions=[],
-                lang="en",
-            )

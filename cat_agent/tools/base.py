@@ -179,6 +179,40 @@ def is_tool_schema(obj: dict) -> bool:
     return True
 
 
+def list_params_to_json_schema(params: List[dict]) -> dict:
+    """Convert legacy list-style tool params to an OpenAI JSON Schema object.
+
+    Legacy format (Qwen-Agent)::
+
+        [{"name": "q", "type": "string", "description": "...", "required": True}, ...]
+
+    OpenAI / Ollama expect::
+
+        {"type": "object", "properties": {...}, "required": [...]}
+    """
+    properties: Dict[str, dict] = {}
+    required: List[str] = []
+
+    for param in params:
+        match param:
+            case {'name': str(name)} if name:
+                prop: dict = {'type': param.get('type', 'string')}
+                for key in ('description', 'enum', 'default'):
+                    if key in param:
+                        prop[key] = param[key]
+                properties[name] = prop
+                if param.get('required'):
+                    required.append(name)
+            case _:
+                continue
+
+    return {
+        'type': 'object',
+        'properties': properties,
+        'required': required,
+    }
+
+
 class BaseTool(ABC):
     name: str = ""
     description: str = ""
@@ -256,11 +290,15 @@ class BaseTool(ABC):
 
     @property
     def function(self) -> dict:  # Bad naming. It should be `function_info`.
+        parameters = self.parameters
+        # Native OAI / Ollama reject list-shaped parameters; always export JSON Schema.
+        if isinstance(parameters, list):
+            parameters = list_params_to_json_schema(parameters)
         return {
             # 'name_for_human': self.name_for_human,
             "name": self.name,
             "description": self.description,
-            "parameters": self.parameters,
+            "parameters": parameters,
             # 'args_format': self.args_format
         }
 

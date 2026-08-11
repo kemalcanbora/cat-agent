@@ -11,7 +11,7 @@
 # limitations under the License.
 
 from cat_agent.graph.graph import END, START, GraphAgent, StateGraph
-from cat_agent.graph.nodes import AgentNode, FunctionNode, Node, NodeStream, ToolNode
+from cat_agent.graph.nodes import AgentNode, FunctionNode, Node, NodeStream
 from cat_agent.graph.state import GraphState
 
 __all__ = [
@@ -22,7 +22,6 @@ __all__ = [
     'NodeStream',
     'AgentNode',
     'FunctionNode',
-    'ToolNode',
     'START',
     'END',
 ]

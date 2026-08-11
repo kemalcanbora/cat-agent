@@ -43,6 +43,9 @@ PARALLEL_CHUNK_SIZE = 1000
 MAX_RAG_TOKEN_SIZE = 4500
 RAG_CHUNK_SIZE = 300
 
+# Hard ceiling on per-question member fan-out (one LLM call per chunk).
+DEFAULT_MAX_CHUNKS = 32
+
 
 class ParallelDocQA(Assistant):
 
@@ -53,7 +56,8 @@ class ParallelDocQA(Assistant):
                  name: Optional[str] = DEFAULT_NAME,
                  description: Optional[str] = DEFAULT_DESC,
                  files: Optional[List[str]] = None,
-                 use_polars: bool = True):
+                 use_polars: bool = True,
+                 max_chunks: int = DEFAULT_MAX_CHUNKS):
         function_list = function_list or []
         super().__init__(
             function_list=[{
@@ -72,6 +76,9 @@ class ParallelDocQA(Assistant):
         self.doc_parse = DocParser()
         self.summary_agent = ParallelDocQASummary(llm=self.llm)
         self.use_polars = use_polars and POLARS_AVAILABLE
+        if max_chunks < 1:
+            raise ValueError(f'max_chunks must be >= 1, got {max_chunks}')
+        self.max_chunks = int(max_chunks)
 
     def _get_files(self, messages: List[Message]):
         session_files = extract_files_from_messages(messages, include_images=False)
@@ -464,6 +471,40 @@ class ParallelDocQA(Assistant):
         except Exception:
             return False, content
 
+    def estimate_member_calls(
+        self,
+        messages: List[Message],
+        lang: str = 'en',
+    ) -> int:
+        """Return how many member LLM calls ``_run`` would issue for these messages.
+
+        Parses and chunks the attached documents the same way as ``_run``, without
+        calling the LLM. Raises the same budget error as ``_run`` when the chunk
+        count exceeds ``max_chunks``.
+        """
+        user_question = extract_text_from_message(messages[-1], add_upload_info=False)
+        records = self._parse_and_chunk_files(messages=messages)
+        if not records:
+            return 0
+        data = self._prepare_parallel_data_polars(
+            records=records,
+            messages=messages,
+            lang=lang,
+            user_question=user_question,
+        )
+        self._enforce_chunk_budget(len(data))
+        return len(data)
+
+    def _enforce_chunk_budget(self, chunk_count: int) -> None:
+        if chunk_count > self.max_chunks:
+            raise ValueError(
+                f'ParallelDocQA document set has {chunk_count} chunks, which exceeds '
+                f'max_chunks={self.max_chunks}. Raise max_chunks only if you accept '
+                f'{chunk_count} member LLM calls for this question, or reduce the '
+                f'document set / chunk size. (Estimated member calls: {chunk_count}; '
+                f'plus GenKeyword and summary ≈ {chunk_count + 2} LLM calls total.)'
+            )
+
     def _run(self, messages: List[Message], lang: str = 'en', **kwargs) -> Iterator[List[Message]]:
         messages = copy.deepcopy(messages)
 
@@ -490,6 +531,13 @@ class ParallelDocQA(Assistant):
             logger.error('No valid chunks after preparation')
             yield [Message(role='assistant', content='Error: No valid content to process')]
             return
+
+        self._enforce_chunk_budget(len(data))
+        # Estimate before spend: one member LLM call per chunk.
+        logger.info(
+            f'ParallelDocQA cost estimate: {len(data)} member LLM calls '
+            f'(max_chunks={self.max_chunks}); plus GenKeyword + summary ≈ {len(data) + 2} total'
+        )
 
         # Retry for None responses (common in smaller models)
         retry_cnt = MAX_NO_RESPONSE_RETRY
@@ -522,7 +570,7 @@ class ParallelDocQA(Assistant):
         )
 
         # Final summary
-        return self.summary_agent.run(messages=messages, lang=lang, knowledge=retrieve_content)
+        yield from self.summary_agent.run(messages=messages, lang=lang, knowledge=retrieve_content)
 
     def _ask_member_agent(self,
                           index: int,

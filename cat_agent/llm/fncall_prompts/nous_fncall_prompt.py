@@ -16,11 +16,9 @@ class NousFnCallPrompt(BaseFnCallPrompt):
                                    messages: List[Message],
                                    functions: List[dict],
                                    lang: Literal['en', 'zh'],
-                                   parallel_function_calls: bool = True,
                                    function_choice: Union[Literal['auto'], str] = 'auto',
                                    **kwargs) -> List[Message]:
         del lang  # ignored
-        del parallel_function_calls  # ignored
         if function_choice != 'auto':
             raise NotImplementedError
 
@@ -89,7 +87,6 @@ class NousFnCallPrompt(BaseFnCallPrompt):
     def postprocess_fncall_messages(
         self,
         messages: List[Message],
-        parallel_function_calls: bool = True,
         function_choice: Union[Literal['auto'], str] = 'auto',
         thought_in_content: bool = False,
     ) -> List[Message]:

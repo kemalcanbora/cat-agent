@@ -91,7 +91,7 @@ class TestRemoveFncallMessages:
 
         with patch("cat_agent.llm.llama_cpp.Llama") as MockLlama:
             MockLlama.return_value = MagicMock()
-            model = LlamaCpp({"model_path": "/nonexistent/fake.gguf", "generate_cfg": {"fncall_prompt_type": "nous"}})
+            model = LlamaCpp({"model_path": "/nonexistent/fake.gguf", "generate_cfg": {}})
             # USER content must be list when we append function call text to it
             messages = [
                 Message(USER, [ContentItem(text="Hi")]),
@@ -109,7 +109,7 @@ class TestRemoveFncallMessages:
 
         with patch("cat_agent.llm.llama_cpp.Llama") as MockLlama:
             MockLlama.return_value = MagicMock()
-            model = LlamaCpp({"model_path": "/nonexistent/fake.gguf", "generate_cfg": {"fncall_prompt_type": "nous"}})
+            model = LlamaCpp({"model_path": "/nonexistent/fake.gguf", "generate_cfg": {}})
             messages = [
                 Message(USER, "First"),
                 Message(USER, "Second"),

@@ -32,7 +32,8 @@ else:
 
 from cat_agent.llm.base import ModelServiceError, register_llm
 from cat_agent.llm.function_calling import BaseFnCallModel
-from cat_agent.llm.schema import ASSISTANT, FunctionCall, Message
+from cat_agent.llm.schema import ASSISTANT, FunctionCall, Message, ToolCall, generate_tool_call_id
+from cat_agent.llm.tool_call_stream import ToolCallStreamMerger
 from cat_agent.log import logger
 
 
@@ -56,8 +57,54 @@ def _merge_usage(msg: Message, usage) -> None:
     msg.extra = extra
 
 
+def _messages_from_completion_message(msg) -> List[Message]:
+    """Map a non-streaming OpenAI chat message to internal Message list.
+
+    Tool calls become a **single** assistant message with ``tool_calls`` populated.
+    """
+    out: List[Message] = []
+    reasoning = getattr(msg, 'reasoning_content', None)
+    content = getattr(msg, 'content', None) or ''
+    raw_tool_calls = getattr(msg, 'tool_calls', None) or []
+
+    if reasoning:
+        out.append(Message(role=ASSISTANT, content='', reasoning_content=reasoning))
+
+    tool_calls: List[ToolCall] = []
+    for i, tc in enumerate(raw_tool_calls):
+        fn = getattr(tc, 'function', None)
+        if fn is None and isinstance(tc, dict):
+            fn = tc.get('function') or {}
+            name = fn.get('name') or ''
+            arguments = fn.get('arguments') or ''
+            tc_id = tc.get('id') or generate_tool_call_id()
+        else:
+            name = getattr(fn, 'name', None) or ''
+            arguments = getattr(fn, 'arguments', None) or ''
+            tc_id = getattr(tc, 'id', None) or generate_tool_call_id()
+        tool_calls.append(ToolCall(
+            id=tc_id,
+            function=FunctionCall(name=name or '', arguments=arguments or ''),
+        ))
+
+    if content and tool_calls:
+        out.append(Message(role=ASSISTANT, content=content, tool_calls=tool_calls))
+    elif tool_calls:
+        out.append(Message(role=ASSISTANT, content='', tool_calls=tool_calls))
+    elif content:
+        out.append(Message(role=ASSISTANT, content=content))
+
+    if not out:
+        out = [Message(role=ASSISTANT, content=content)]
+    return out
+
+
 @register_llm('oai')
 class TextChatAtOAI(BaseFnCallModel):
+
+    @property
+    def supports_native_tools(self) -> bool:
+        return True
 
     def __init__(self, cfg: Optional[Dict] = None):
         super().__init__(cfg)
@@ -252,7 +299,7 @@ class TextChatAtOAI(BaseFnCallModel):
             else:
                 full_response = ''
                 full_reasoning_content = ''
-                full_tool_calls = []
+                merger = ToolCallStreamMerger()
                 last_res: Optional[List[Message]] = None
                 captured_usage = None
                 for chunk in response:
@@ -266,31 +313,18 @@ class TextChatAtOAI(BaseFnCallModel):
                     if hasattr(chunk.choices[0].delta, 'content') and chunk.choices[0].delta.content:
                         full_response += chunk.choices[0].delta.content
                     if hasattr(chunk.choices[0].delta, 'tool_calls') and chunk.choices[0].delta.tool_calls:
-                        for tc in chunk.choices[0].delta.tool_calls:
-                            if full_tool_calls and (not tc.id or
-                                                    tc.id == full_tool_calls[-1]['extra']['function_id']):
-                                if tc.function.name:
-                                    full_tool_calls[-1].function_call['name'] += tc.function.name
-                                if tc.function.arguments:
-                                    full_tool_calls[-1].function_call['arguments'] += tc.function.arguments
-                            else:
-                                full_tool_calls.append(
-                                    Message(role=ASSISTANT,
-                                            content='',
-                                            function_call=FunctionCall(name=tc.function.name,
-                                                                       arguments=tc.function.arguments),
-                                            extra={'function_id': tc.id}))
+                        merger.push_many(chunk.choices[0].delta.tool_calls)
 
                     res = []
                     if full_reasoning_content:
                         res.append(Message(role=ASSISTANT, content='', reasoning_content=full_reasoning_content))
-                    if full_response:
-                        res.append(Message(
-                            role=ASSISTANT,
-                            content=full_response,
-                        ))
-                    if full_tool_calls:
-                        res += full_tool_calls
+                    merged_calls = merger.tool_calls()
+                    if full_response and merged_calls:
+                        res.append(Message(role=ASSISTANT, content=full_response, tool_calls=merged_calls))
+                    elif merged_calls:
+                        res.append(Message(role=ASSISTANT, content='', tool_calls=merged_calls))
+                    elif full_response:
+                        res.append(Message(role=ASSISTANT, content=full_response))
                     last_res = res
                     yield res
                 if captured_usage and last_res:
@@ -307,15 +341,10 @@ class TextChatAtOAI(BaseFnCallModel):
         messages = self.convert_messages_to_dicts(messages)
         try:
             response = self._chat_complete_create(model=self.model, messages=messages, stream=False, **generate_cfg)
-            if hasattr(response.choices[0].message, 'reasoning_content'):
-                out = [
-                    Message(role=ASSISTANT,
-                            content=response.choices[0].message.content,
-                            reasoning_content=response.choices[0].message.reasoning_content)
-                ]
-            else:
-                out = [Message(role=ASSISTANT, content=response.choices[0].message.content)]
-            _merge_usage(out[-1], getattr(response, 'usage', None))
+            msg = response.choices[0].message
+            out = _messages_from_completion_message(msg)
+            if out:
+                _merge_usage(out[-1], getattr(response, 'usage', None))
             return out
         except OpenAIError as ex:
             raise ModelServiceError(exception=ex)

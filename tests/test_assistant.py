@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cat_agent.llm.schema import SYSTEM, USER, Message
+from cat_agent.llm.schema import ASSISTANT, SYSTEM, USER, Message
 from cat_agent.agents.assistant import (
     KNOWLEDGE_SNIPPET,
     KNOWLEDGE_TEMPLATE,
@@ -107,3 +107,83 @@ class TestAssistant:
             assert out[0].role == SYSTEM
             assert "c" in str(out[0].content)
             assert "u" in str(out[0].content) or "[file]" in str(out[0].content)
+
+
+class _CaptureLLM:
+    """Records the prompt messages seen by chat(); returns a fixed assistant reply."""
+
+    def __init__(self, reply: str = 'ASSISTANT_REPLY'):
+        self.model = 'fake'
+        self.model_type = 'fake'
+        self.reply = reply
+        self.last_messages = None
+        self.calls = 0
+
+    def chat(self, messages, functions=None, stream=True, delta_stream=False, extra_generate_cfg=None):
+        self.calls += 1
+        self.last_messages = messages
+        out = [Message(role=ASSISTANT, content=self.reply)]
+        if stream:
+            return iter([out])
+        return out
+
+
+def _flatten_text(messages) -> str:
+    parts = []
+    for m in messages or []:
+        c = m.content if hasattr(m, 'content') else m.get('content')
+        if isinstance(c, str):
+            parts.append(c)
+        elif isinstance(c, list):
+            for item in c:
+                t = getattr(item, 'text', None) or (item.get('text') if isinstance(item, dict) else None)
+                if t:
+                    parts.append(str(t))
+    return '\n'.join(parts)
+
+
+class TestAssistantRunE2E:
+    """Assistant._run: RAG knowledge injection then FnCallAgent loop must yield."""
+
+    def test_explicit_knowledge_reaches_prompt_and_response_is_yielded(self):
+        from cat_agent.agents.assistant import Assistant
+
+        fake = _CaptureLLM(reply='ANSWER_FROM_KNOWLEDGE')
+        knowledge = json.dumps([{
+            'url': 'fixture_policy.txt',
+            'text': ['SECRET_KNOWLEDGE_MARKER refunds within 30 days'],
+        }])
+        with patch('cat_agent.agents.fncall_agent.Memory', return_value=MagicMock()):
+            asst = Assistant(llm=fake, files=[], system_message='')
+
+        out = list(asst.run(
+            [Message(role=USER, content='What is the refund policy?')],
+            knowledge=knowledge,
+        ))
+        assert out, 'Assistant._run must yield at least one response'
+        assert out[-1][-1].content == 'ANSWER_FROM_KNOWLEDGE'
+        prompt = _flatten_text(fake.last_messages)
+        assert 'SECRET_KNOWLEDGE_MARKER' in prompt
+        assert 'Knowledge Base' in prompt or 'content from' in prompt.lower()
+        assert fake.calls >= 1
+
+    def test_mem_retrieval_path_injects_knowledge_into_prompt(self):
+        from cat_agent.agents.assistant import Assistant
+
+        fake = _CaptureLLM(reply='MEM_PATH_ANSWER')
+        retrieved = json.dumps([{
+            'url': 'rag_hit.txt',
+            'text': ['RETRIEVED_CHUNK_MARKER office hours 9-5'],
+        }])
+        mock_mem = MagicMock()
+        mock_mem.run.return_value = iter([[Message(role=ASSISTANT, content=retrieved)]])
+
+        with patch('cat_agent.agents.fncall_agent.Memory', return_value=mock_mem):
+            asst = Assistant(llm=fake, files=['/tmp/doc.txt'], system_message='')
+
+        out = list(asst.run([Message(role=USER, content='When are you open?')]))
+        assert out
+        assert out[-1][-1].content == 'MEM_PATH_ANSWER'
+        mock_mem.run.assert_called()
+        prompt = _flatten_text(fake.last_messages)
+        assert 'RETRIEVED_CHUNK_MARKER' in prompt

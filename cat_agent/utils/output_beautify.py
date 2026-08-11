@@ -33,7 +33,17 @@ def typewriter_print(messages: List[dict], text: str) -> str:
             if msg.get('content'):
                 assert isinstance(msg['content'], str), 'Now only supports text messages'
                 content.append(f'{ANSWER_S}\n{msg["content"]}')
-            if msg.get('function_call'):
+            if msg.get('tool_calls'):
+                for tc in msg['tool_calls']:
+                    fn = tc.get('function') or {} if isinstance(tc, dict) else getattr(tc, 'function', None)
+                    if isinstance(fn, dict):
+                        name, arguments = fn.get('name', ''), fn.get('arguments', '')
+                    else:
+                        name = getattr(fn, 'name', '') if fn is not None else ''
+                        arguments = getattr(fn, 'arguments', '') if fn is not None else ''
+                    content.append(f'{TOOL_CALL_S} {name}\n{arguments}')
+            elif msg.get('function_call'):
+                # Legacy dumped / hand-built dicts still accepted for display.
                 content.append(f'{TOOL_CALL_S} {msg["function_call"]["name"]}\n{msg["function_call"]["arguments"]}')
         elif msg['role'] == FUNCTION:
             content.append(f'{TOOL_RESULT_S} {msg["name"]}\n{msg["content"]}')
@@ -114,7 +124,17 @@ def multimodal_typewriter_print(messages: List[dict], text: str = '') -> str:
             if msg.get('content'):
                 assert isinstance(msg['content'], str), 'Now only supports text messages'
                 content_parts.append(f'{ANSWER_S}\n{msg["content"]}')
-            if msg.get('function_call'):
+            if msg.get('tool_calls'):
+                for tc in msg['tool_calls']:
+                    fn = tc.get('function') or {} if isinstance(tc, dict) else getattr(tc, 'function', None)
+                    if isinstance(fn, dict):
+                        name, arguments = fn.get('name', ''), fn.get('arguments', '')
+                    else:
+                        name = getattr(fn, 'name', '') if fn is not None else ''
+                        arguments = getattr(fn, 'arguments', '') if fn is not None else ''
+                    content_parts.append(f'{TOOL_CALL_S} {name}\n{arguments}')
+            elif msg.get('function_call'):
+                # Legacy dumped / hand-built dicts still accepted for display.
                 content_parts.append(f'{TOOL_CALL_S} {msg["function_call"]["name"]}\n{msg["function_call"]["arguments"]}')
         elif msg['role'] == FUNCTION:
             tool_name = msg.get("name", "unknown_tool")

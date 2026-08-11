@@ -156,6 +156,11 @@ class LlamaCppVision(BaseFnCallModel):
 
         self._supports_function_calling = True
 
+    @property
+    def supports_native_tools(self) -> bool:
+        # Prompt-path only. Native llama.cpp tool handlers are a follow-up.
+        return False
+
     # ------------------------------------------------------------------
     # Multimodal flags
     # ------------------------------------------------------------------

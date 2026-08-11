@@ -1,0 +1,3 @@
+Shipping takes three business days for domestic orders.
+International shipping can take up to two weeks.
+Contact support at help@example.com for tracking issues.
