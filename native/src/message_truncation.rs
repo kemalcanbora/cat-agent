@@ -418,7 +418,13 @@ pub fn truncate_messages_py<'py>(
         }
         // content / reasoning were stored via serde_json for strings, or json.dumps otherwise.
         set_json_field(&dict, "content", &message.content_json, py, true)?;
-        set_json_field(&dict, "function_call", &message.function_call_json, py, true)?;
+        set_json_field(
+            &dict,
+            "function_call",
+            &message.function_call_json,
+            py,
+            true,
+        )?;
         set_json_field(&dict, "tool_calls", &message.tool_calls_json, py, true)?;
         if let Some(tool_call_id) = message.tool_call_id {
             dict.set_item("tool_call_id", tool_call_id)?;
