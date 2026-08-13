@@ -16,9 +16,11 @@ _EMAIL = re.compile(
     r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}',
     re.IGNORECASE,
 )
+# Loose phone pattern; ISO dates (YYYY-MM-DD) are excluded in _redact_phones.
 _PHONE = re.compile(
     r'(?:\+?\d{1,3}[\s\-.]?)?(?:\(?\d{2,4}\)?[\s\-.]?)?\d{3}[\s\-.]?\d{2}[\s\-.]?\d{2,4}',
 )
+_ISO_DATE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 _IBAN = re.compile(
     r'\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b',
     re.IGNORECASE,
@@ -41,11 +43,22 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (_EMAIL, PII_PLACEHOLDER),
     (_IBAN, PII_PLACEHOLDER),
     (_CREDIT_CARD, PII_PLACEHOLDER),
-    (_PHONE, PII_PLACEHOLDER),
     (_AUTHORIZATION_HEADER, r'\1' + SECRET_PLACEHOLDER),
     (_OPENAI_SK, SECRET_PLACEHOLDER),
     (_URL_SECRET_QUERY, r'\1' + SECRET_PLACEHOLDER),
 )
+
+
+def _redact_phones(text: str) -> str:
+    """Redact phone-like spans; keep ISO calendar dates (common in tool JSON)."""
+
+    def replacer(match: re.Match[str]) -> str:
+        candidate = match.group(0)
+        if _ISO_DATE.match(candidate.strip()):
+            return candidate
+        return PII_PLACEHOLDER
+
+    return _PHONE.sub(replacer, text)
 
 
 def _env_flag(name: str, *, default: bool = True) -> bool:
@@ -94,6 +107,7 @@ def _apply_regex_redaction(text: str) -> str:
     redacted = text
     for pattern, replacement in _PATTERNS:
         redacted = pattern.sub(replacement, redacted)
+    redacted = _redact_phones(redacted)
     return _redact_turkish_tc_ids(redacted)
 
 

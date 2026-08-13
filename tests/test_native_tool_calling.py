@@ -24,7 +24,7 @@ from cat_agent.llm.base.model import BaseChatModel
 from cat_agent.llm.fncall_prompts.nous_fncall_prompt import NousFnCallPrompt
 from cat_agent.llm.function_calling import BaseFnCallModel
 from cat_agent.llm.oai import TextChatAtOAI, _messages_from_completion_message
-from cat_agent.llm.schema import ASSISTANT, FUNCTION, USER, ContentItem, FunctionCall, Message
+from cat_agent.llm.schema import ASSISTANT, FUNCTION, USER, ContentItem, FunctionCall, Message, ToolCall
 
 
 def _tc(name: str, arguments: str, tc_id: str):
@@ -306,3 +306,81 @@ class TestQuickChatOaiIds:
             tools=[{'type': 'function', 'function': {'name': 't'}}],
         ))
         assert chunks[-1]['choices'][0]['message']['tool_calls'][0]['id'] == 'real_id'
+
+
+class TestFormatPreservesParallelToolCalls:
+    """format_as_text_message must not collapse parallel tool_calls or regenerate ids."""
+
+    def test_assistant_keeps_all_tool_call_ids(self):
+        from cat_agent.utils.message_utils import format_as_text_message
+
+        asst = Message(
+            role=ASSISTANT,
+            content='calling tools',
+            tool_calls=[
+                ToolCall(id='call_a', function=FunctionCall(name='alpha', arguments='{}')),
+                ToolCall(id='call_b', function=FunctionCall(name='beta', arguments='{"x":1}')),
+            ],
+        )
+        out = format_as_text_message(asst, add_upload_info=False)
+        assert out.tool_calls is not None
+        assert [tc.id for tc in out.tool_calls] == ['call_a', 'call_b']
+        assert [tc.function.name for tc in out.tool_calls] == ['alpha', 'beta']
+
+    def test_function_keeps_tool_call_id_and_content(self):
+        from cat_agent.utils.message_utils import format_as_text_message
+
+        body = '{"total": 2, "calls": [{"identifier": "HORIZON-X"}]}'
+        fn = Message(
+            role=FUNCTION,
+            content=body,
+            name='sedia_search',
+            tool_call_id='call_a',
+            extra={'function_id': 'call_a'},
+        )
+        out = format_as_text_message(fn, add_upload_info=False)
+        assert out.tool_call_id == 'call_a'
+        assert out.content == body
+        assert out.name == 'sedia_search'
+
+    def test_oai_wire_ids_match_after_format(self):
+        from cat_agent.llm.oai import TextChatAtOAI
+        from cat_agent.utils.message_utils import format_as_text_message
+
+        asst = Message(
+            role=ASSISTANT,
+            content='',
+            tool_calls=[
+                ToolCall(id='call_a', function=FunctionCall(name='sedia_search', arguments='{"q":"a"}')),
+                ToolCall(id='call_b', function=FunctionCall(name='sedia_search', arguments='{"q":"b"}')),
+            ],
+        )
+        fn_a = Message(
+            role=FUNCTION,
+            content='{"total":1}',
+            name='sedia_search',
+            tool_call_id='call_a',
+            extra={'function_id': 'call_a'},
+        )
+        fn_b = Message(
+            role=FUNCTION,
+            content='{"total":2}',
+            name='sedia_search',
+            tool_call_id='call_b',
+            extra={'function_id': 'call_b'},
+        )
+        msgs = [
+            Message(role=USER, content='search'),
+            asst,
+            fn_a,
+            fn_b,
+        ]
+        # chat() formats before convert_messages_to_dicts
+        msgs = [format_as_text_message(m, add_upload_info=False) for m in msgs]
+        llm = TextChatAtOAI({'model': 'x', 'api_key': 'x', 'base_url': 'http://127.0.0.1:9/v1'})
+        wire = llm.convert_messages_to_dicts(msgs)
+        asst_wire = next(w for w in wire if w['role'] == 'assistant')
+        tool_wires = [w for w in wire if w['role'] == 'tool']
+        assert [tc['id'] for tc in asst_wire['tool_calls']] == ['call_a', 'call_b']
+        assert [w['tool_call_id'] for w in tool_wires] == ['call_a', 'call_b']
+        assert [w['content'] for w in tool_wires] == ['{"total":1}', '{"total":2}']

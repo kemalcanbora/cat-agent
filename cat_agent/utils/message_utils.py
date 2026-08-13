@@ -4,7 +4,16 @@ import json
 import re
 from typing import List, Literal, Tuple, Union
 
-from cat_agent.llm.schema import ASSISTANT, DEFAULT_SYSTEM_MESSAGE, FUNCTION, SYSTEM, USER, ContentItem, Message
+from cat_agent.llm.schema import (
+    ASSISTANT,
+    DEFAULT_SYSTEM_MESSAGE,
+    FUNCTION,
+    SYSTEM,
+    TOOL,
+    USER,
+    ContentItem,
+    Message,
+)
 from cat_agent.log import logger
 from cat_agent.utils.file_utils import get_basename_from_url
 from cat_agent.utils.misc import has_chinese_chars
@@ -22,7 +31,7 @@ def format_as_multimodal_message(
     add_audio_upload_info: bool,
     lang: Literal['auto', 'en', 'zh'] = 'auto',
 ) -> Message:
-    assert msg.role in (USER, ASSISTANT, SYSTEM, FUNCTION)
+    assert msg.role in (USER, ASSISTANT, SYSTEM, FUNCTION, TOOL)
     content: List[ContentItem] = []
 
     if isinstance(msg.content, str):
@@ -71,19 +80,23 @@ def format_as_multimodal_message(
 
                 # Avoid duplicate upload info
                 if not any(item.text and upload_str in item.text for item in content):
-                    if msg.role in (ASSISTANT, FUNCTION):
+                    if msg.role in (ASSISTANT, FUNCTION, TOOL):
                         content = [ContentItem(text=upload_str)]
                     else:
                         content = [ContentItem(text=upload_str)] + content
     else:
         raise TypeError
 
+    # Preserve tool_calls / tool_call_id. Passing only function_call (first call)
+    # collapses parallel tool_calls and regenerates ids, so subsequent tool
+    # results no longer match and providers drop their bodies.
     return Message(
         role=msg.role,
         content=content,
         reasoning_content=msg.reasoning_content,
-        name=msg.name if msg.role == FUNCTION else None,
-        function_call=msg.function_call,
+        name=msg.name if msg.role in (FUNCTION, TOOL) else None,
+        tool_calls=msg.tool_calls,
+        tool_call_id=msg.tool_call_id,
         extra=msg.extra,
     )
 
@@ -230,7 +243,7 @@ def build_text_completion_prompt(
         assert isinstance(msg.content, str)
         content = msg.content
         if allow_special:
-            assert msg.role in (USER, ASSISTANT, SYSTEM, FUNCTION)
+            assert msg.role in (USER, ASSISTANT, SYSTEM, FUNCTION, TOOL)
             if msg.function_call:
                 assert msg.role == ASSISTANT
                 tool_call = msg.function_call.arguments

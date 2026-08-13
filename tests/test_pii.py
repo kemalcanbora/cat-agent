@@ -21,6 +21,19 @@ class TestPiiRedaction:
         assert PII_PLACEHOLDER in redact_text(text)
         assert 'patient@hospital.example' not in redact_text(text)
 
+    def test_preserves_iso_dates(self):
+        # Phone regex used to treat YYYY-MM-DD as a phone number.
+        text = 'deadline: 2026-09-30 status open; call HORIZON-JU-EUROHPC-2026-PQC-06-01'
+        assert '2026-09-30' in redact_text(text)
+        assert 'HORIZON-JU-EUROHPC-2026-PQC-06-01' in redact_text(text)
+
+    def test_still_redacts_phones(self):
+        text = 'Call +34 93 413 77 16 or +90 532 111 22 33'
+        redacted = redact_text(text)
+        assert '+34 93 413 77 16' not in redacted
+        assert '+90 532 111 22 33' not in redacted
+        assert PII_PLACEHOLDER in redacted
+
     def test_redacts_iban(self):
         text = 'Account TR330006100519786457841326'
         redacted = redact_text(text)
