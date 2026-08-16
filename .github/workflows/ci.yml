@@ -114,4 +114,7 @@ jobs:
         continue-on-error: true
 
       - name: Run tests with coverage
-        run: pytest --cov=cat_agent --cov-report=term-missing --cov-fail-under=50
+        # Use path form (--cov=./cat_agent), not the module name: coverage's
+        # module-source probe double-imports PyO3 extensions and fails with
+        # "cannot load module more than once per process".
+        run: pytest --cov=./cat_agent --cov-report=term-missing --cov-fail-under=50

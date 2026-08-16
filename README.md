@@ -1194,7 +1194,7 @@ Run from repo root after installing matching extras.
 ```bash
 pip install -e ".[test,local,rag,otel,synthesis]"
 pytest
-pytest --cov=cat_agent --cov-report=term
+pytest --cov=./cat_agent --cov-report=term
 
 cargo test --manifest-path native/Cargo.toml --no-default-features
 ```
