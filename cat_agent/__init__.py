@@ -1,4 +1,4 @@
-__version__ = "0.10.2"
+__version__ = "0.11.0"
 
 from cat_agent.env import load_env_file
 
