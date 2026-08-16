@@ -174,13 +174,17 @@ def test_onnx_embedder_init_infers_dimensions():
 
     ort = MagicMock()
     ort.InferenceSession.return_value = session
-    np_mod = MagicMock()
 
-    with patch.dict('sys.modules', {'numpy': np_mod, 'onnxruntime': ort}):
+    # Stub only onnxruntime. Replacing a live ``numpy`` entry in ``sys.modules``
+    # (then restoring/removing it) can leave NumPy's C extension initialized
+    # while the package is gone from ``sys.modules``. NumPy 2.4+ then raises
+    # ``ImportError: cannot load module more than once per process`` on the
+    # next real import (e.g. llama_cpp / rank_bm25 under pytest-cov).
+    with patch.dict('sys.modules', {'onnxruntime': ort}):
         embedder = emb.OnnxEmbedder('/tmp/m.onnx')
     assert embedder.dimensions == 64
 
     session.get_outputs.return_value = [SimpleNamespace(name='out', shape=['batch', 'dim'])]
-    with patch.dict('sys.modules', {'numpy': np_mod, 'onnxruntime': ort}):
+    with patch.dict('sys.modules', {'onnxruntime': ort}):
         embedder2 = emb.OnnxEmbedder('/tmp/m.onnx', dimensions=None)
     assert embedder2.dimensions == 384

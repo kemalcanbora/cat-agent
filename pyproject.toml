@@ -158,10 +158,11 @@ readme = { file = "README.md", content-type = "text/markdown" }
 ]
 
 [tool.coverage.run]
-# Prefer the package *directory* so coverage does not import the module just to
-# discover paths. Module-form `source = ["cat_agent"]` + `--cov=cat_agent` can
-# init PyO3 extensions twice (`cat_agent._native`, pydantic-core, …) and fail with:
+# Path relative to cwd (the package directory), not an importable module name.
+# Module-form `--cov=cat_agent` makes coverage import the package to resolve
+# paths and can init PyO3 / other C extensions twice in one process:
 #   ImportError: cannot load module more than once per process
+# Pair with CI's `--cov=./cat_agent`.
 source = ["cat_agent"]
 omit = [
     "cat_agent/tools/resource/docker_runtime/*",
