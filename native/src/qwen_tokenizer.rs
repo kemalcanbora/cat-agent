@@ -10,11 +10,7 @@ use unicode_normalization::UnicodeNormalization;
 
 fn encode_normalized(text: &str) -> Vec<u32> {
     let normalized: String = text.nfc().collect();
-    o200k_base_singleton()
-        .encode_with_special_tokens(&normalized)
-        .into_iter()
-        .map(|rank| rank as u32)
-        .collect()
+    o200k_base_singleton().encode_with_special_tokens(&normalized)
 }
 
 pub fn count_qwen_tokens(text: &str) -> PyResult<usize> {
@@ -26,9 +22,8 @@ pub fn encode_qwen_tokens(text: &str) -> PyResult<Vec<u32>> {
 }
 
 pub fn decode_qwen_tokens(token_ids: &[u32]) -> PyResult<String> {
-    let ranks: Vec<_> = token_ids.iter().map(|&id| id).collect();
     o200k_base_singleton()
-        .decode(ranks)
+        .decode(token_ids.to_vec())
         .map_err(|error| PyIOError::new_err(format!("failed to decode tokens: {error}")))
 }
 
