@@ -54,7 +54,7 @@ def test_extract_doc_vocabulary_files_json_string():
     parser.call.assert_called()
 
 
-def test_extract_doc_vocabulary_sklearn_path():
+def test_extract_doc_vocabulary_sklearn_path(monkeypatch):
     tool, parser, db = _make_tool()
     parser.call.side_effect = lambda params, **kwargs: f"text for {params['url']}"
 
@@ -74,12 +74,11 @@ def test_extract_doc_vocabulary_sklearn_path():
     fake_module = MagicMock()
     fake_module.TfidfVectorizer.return_value = vectorizer
 
-    with patch.dict(sys.modules, {
-        'sklearn': MagicMock(),
-        'sklearn.feature_extraction': MagicMock(),
-        'sklearn.feature_extraction.text': fake_module,
-    }):
-        out = tool.call({'files': ['/docs/one.txt']})
+    # setitem only — patch.dict(sys.modules) wipes modules imported in-block.
+    monkeypatch.setitem(sys.modules, 'sklearn', MagicMock())
+    monkeypatch.setitem(sys.modules, 'sklearn.feature_extraction', MagicMock())
+    monkeypatch.setitem(sys.modules, 'sklearn.feature_extraction.text', fake_module)
+    out = tool.call({'files': ['/docs/one.txt']})
 
     assert out == 'high, low'
     put_calls = [c for c in db.call.call_args_list if c.args[0].get('operate') == 'put']
@@ -88,7 +87,7 @@ def test_extract_doc_vocabulary_sklearn_path():
     assert stored == 'high, low'
 
 
-def test_extract_doc_vocabulary_sklearn_missing():
+def test_extract_doc_vocabulary_sklearn_missing(monkeypatch):
     tool, parser, db = _make_tool()
     parser.call.return_value = 'some document text'
 
@@ -99,10 +98,8 @@ def test_extract_doc_vocabulary_sklearn_missing():
 
     db.call.side_effect = db_call
 
-    with patch.dict(sys.modules, {
-        'sklearn': None,
-        'sklearn.feature_extraction': None,
-        'sklearn.feature_extraction.text': None,
-    }):
-        with pytest.raises(ModuleNotFoundError, match='scikit-learn'):
-            tool.call({'files': ['/docs/a.txt']})
+    monkeypatch.setitem(sys.modules, 'sklearn', None)
+    monkeypatch.setitem(sys.modules, 'sklearn.feature_extraction', None)
+    monkeypatch.setitem(sys.modules, 'sklearn.feature_extraction.text', None)
+    with pytest.raises(ModuleNotFoundError, match='scikit-learn'):
+        tool.call({'files': ['/docs/a.txt']})

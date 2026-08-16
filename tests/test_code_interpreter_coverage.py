@@ -77,10 +77,12 @@ def test_check_docker_availability_timeout(monkeypatch):
         ci._check_docker_availability()
 
 
-def test_check_host_deps_import_error():
-    with patch.dict('sys.modules', {'jupyter_client': None}):
-        with pytest.raises(ImportError, match='code_interpreter'):
-            ci._check_host_deps()
+def test_check_host_deps_import_error(monkeypatch):
+    # Prefer setitem over patch.dict(sys.modules): patch.dict restores by
+    # clear()+update(snapshot) and wipes modules imported inside the block.
+    monkeypatch.setitem(__import__('sys').modules, 'jupyter_client', None)
+    with pytest.raises(ImportError, match='code_interpreter'):
+        ci._check_host_deps()
 
 
 def test_args_format_custom_and_default(tmp_path):
@@ -359,16 +361,10 @@ def test_start_kernel_mocked(tmp_path, monkeypatch):
     monkeypatch.setitem(
         __import__('sys').modules,
         'jupyter_client',
-        SimpleNamespace(BlockingKernelClient=lambda **kw: fake_kc),
+        SimpleNamespace(BlockingKernelClient=MagicMock(return_value=fake_kc)),
     )
-    # import happens inside method
-    with patch.dict('sys.modules', {
-        'jupyter_client': SimpleNamespace(
-            BlockingKernelClient=MagicMock(return_value=fake_kc),
-        ),
-    }):
-        with patch('asyncio.set_event_loop_policy'):
-            kc, cid = tool._start_kernel('kid')
+    with patch('asyncio.set_event_loop_policy'):
+        kc, cid = tool._start_kernel('kid')
     assert kc is fake_kc
     assert cid == 'container123'
     fake_kc.load_connection_file.assert_called_once()

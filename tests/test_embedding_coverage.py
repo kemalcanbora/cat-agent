@@ -12,6 +12,7 @@
 
 """Coverage tests for cat_agent.tools.search_tools.embedding (mocked backends)."""
 
+import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -56,10 +57,14 @@ def test_build_embedder_onnx_requires_path():
         emb.build_embedder({'embedding_backend': 'onnx'})
 
 
-def test_onnx_embedder_import_error():
-    with patch.dict('sys.modules', {'onnxruntime': None}):
-        with pytest.raises(ImportError, match='onnxruntime'):
-            emb.OnnxEmbedder('/tmp/model.onnx')
+def test_onnx_embedder_import_error(monkeypatch):
+    # Do NOT use patch.dict(sys.modules): on exit it clear()s the whole dict and
+    # restores a pre-enter snapshot, wiping any modules imported inside the
+    # block (e.g. numpy). NumPy's C extension stays loaded → later imports fail
+    # with "cannot load module more than once per process".
+    monkeypatch.setitem(sys.modules, 'onnxruntime', None)
+    with pytest.raises(ImportError, match='onnxruntime'):
+        emb.OnnxEmbedder('/tmp/model.onnx')
 
 
 def test_onnx_embedder_embed_paths():
@@ -167,24 +172,19 @@ def test_build_embedder_onnx_wires_constructor():
     ctor.assert_called_once_with(model_path='/m.onnx', dimensions=32)
 
 
-def test_onnx_embedder_init_infers_dimensions():
+def test_onnx_embedder_init_infers_dimensions(monkeypatch):
     session = MagicMock()
     session.get_inputs.return_value = [SimpleNamespace(name='input_ids')]
     session.get_outputs.return_value = [SimpleNamespace(name='out', shape=[None, 64])]
 
     ort = MagicMock()
     ort.InferenceSession.return_value = session
+    # Single-key stub only — never patch.dict(sys.modules) (see import_error).
+    monkeypatch.setitem(sys.modules, 'onnxruntime', ort)
 
-    # Stub only onnxruntime. Replacing a live ``numpy`` entry in ``sys.modules``
-    # (then restoring/removing it) can leave NumPy's C extension initialized
-    # while the package is gone from ``sys.modules``. NumPy 2.4+ then raises
-    # ``ImportError: cannot load module more than once per process`` on the
-    # next real import (e.g. llama_cpp / rank_bm25 under pytest-cov).
-    with patch.dict('sys.modules', {'onnxruntime': ort}):
-        embedder = emb.OnnxEmbedder('/tmp/m.onnx')
+    embedder = emb.OnnxEmbedder('/tmp/m.onnx')
     assert embedder.dimensions == 64
 
     session.get_outputs.return_value = [SimpleNamespace(name='out', shape=['batch', 'dim'])]
-    with patch.dict('sys.modules', {'onnxruntime': ort}):
-        embedder2 = emb.OnnxEmbedder('/tmp/m.onnx', dimensions=None)
+    embedder2 = emb.OnnxEmbedder('/tmp/m.onnx', dimensions=None)
     assert embedder2.dimensions == 384
