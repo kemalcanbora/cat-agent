@@ -126,8 +126,16 @@ def test_deploy_skips_push_when_local(tmp_path, monkeypatch):
         encoding='utf-8',
     )
     (tmp_path / 'app.py').write_text('def registry():\n    pass\n', encoding='utf-8')
+    cfg_path = tmp_path / 'platform.toml'
+    cfg_path.write_text(
+        '[platform]\n'
+        'registry = "local"\n'
+        'docker_network = "nomad_deploy_hashicorp"\n'
+        'consul_dns = "10.32.0.2"\n',
+        encoding='utf-8',
+    )
     args = SimpleNamespace(
-        config=None,
+        config=str(cfg_path),
         nomad_addr=None,
         registry='local',
         dir=str(tmp_path),

@@ -115,6 +115,7 @@ test = [
     "pytest",
     "pytest-cov",
     "pytest-asyncio",
+    "hypothesis",
     "rank_bm25",
     "cat-agent[scheduler,serve,platform]",
 ]
@@ -147,7 +148,6 @@ readme = { file = "README.md", content-type = "text/markdown" }
 
 [tool.setuptools.package-data]
 "cat_agent" = [
-    "utils/qwen.tiktoken",
     "tools/resource/*.ttf",
     "tools/resource/*.py",
     "tools/resource/docker_runtime/*.py",
@@ -156,6 +156,17 @@ readme = { file = "README.md", content-type = "text/markdown" }
     "tools/resource/wasm_runtime/usr/local/lib/python311.zip",
     "platform/templates/*.tmpl",
 ]
+
+[tool.coverage.run]
+source = ["cat_agent"]
+omit = [
+    "cat_agent/tools/resource/docker_runtime/*",
+    "cat_agent/tools/resource/wasm_runtime/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
 
 [tool.importlinter]
 root_package = "cat_agent"

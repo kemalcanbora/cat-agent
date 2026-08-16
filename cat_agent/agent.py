@@ -54,6 +54,8 @@ from cat_agent.utils.utils import has_chinese_messages, merge_generate_cfgs
 if TYPE_CHECKING:
     from cat_agent.observability.handlers.base import BaseHandler
     from cat_agent.security.principal import Principal
+    from cat_agent.trace.schema import RunLimits
+    from cat_agent.context.manager import ContextManager
 
 # One-time warning when sync run() is invoked under a running event loop.
 _RUN_IN_LOOP_WARNED = False
@@ -83,6 +85,8 @@ class Agent(ABC):
                  handlers: Optional[List['BaseHandler']] = None,
                  principal: Optional['Principal'] = None,
                  workspace: Optional[str] = None,
+                 run_limits: Optional['RunLimits'] = None,
+                 context_manager: Optional['ContextManager'] = None,
                  **kwargs):
         """Initialization the agent.
 
@@ -112,6 +116,10 @@ class Agent(ABC):
         if handlers is None:
             handlers = kwargs.pop('handlers', None)
         rate_limiter = kwargs.pop('rate_limiter', None)
+        if run_limits is None:
+            run_limits = kwargs.pop('run_limits', None)
+        if context_manager is None:
+            context_manager = kwargs.pop('context_manager', None)
         self.principal = principal
         self.workspace = workspace
         self._adopted_tool_names = set()
@@ -137,6 +145,8 @@ class Agent(ABC):
         self._handlers = handlers or []
         self._async_closed = False
         self._async_inflight = 0
+        self.run_limits = run_limits
+        self.context_manager = context_manager
         from cat_agent.utils.rate_limit import RateLimiter
         self.rate_limiter = RateLimiter.from_cfg(rate_limiter) if rate_limiter is not None else None
 
@@ -216,26 +226,33 @@ class Agent(ABC):
 
         handlers = resolve_handlers(self._handlers, kwargs.get('handlers'))
         emit_stream_chunks = bool(kwargs.get('emit_stream_chunks'))
-        if handlers:
-            with run_context(
-                agent_name=self.name,
-                agent_class=type(self).__name__,
-                handlers=handlers,
-                trace_id=kwargs.get('trace_id'),
-                emit_stream_chunks=emit_stream_chunks,
-            ) as ctx:
-                yield from self._run_with_observability(
-                    new_messages=new_messages,
-                    return_message_type=_return_message_type,
-                    lang=kwargs.get('lang', 'en'),
-                    run_kwargs=kwargs,
-                    ctx=ctx,
+
+        def _core():
+            if handlers:
+                with run_context(
+                    agent_name=self.name,
+                    agent_class=type(self).__name__,
+                    handlers=handlers,
+                    trace_id=kwargs.get('trace_id'),
+                    emit_stream_chunks=emit_stream_chunks,
+                ) as ctx:
+                    yield from self._run_with_observability(
+                        new_messages=new_messages,
+                        return_message_type=_return_message_type,
+                        lang=kwargs.get('lang', 'en'),
+                        run_kwargs=kwargs,
+                        ctx=ctx,
+                    )
+            else:
+                yield from self._yield_run_responses(
+                    self._run(messages=new_messages, **kwargs),
+                    _return_message_type,
                 )
-        else:
-            yield from self._yield_run_responses(
-                self._run(messages=new_messages, **kwargs),
-                _return_message_type,
-            )
+
+        from cat_agent.trace.instrument import wrap_run_with_trace
+        yield from wrap_run_with_trace(
+            self, new_messages=new_messages, kwargs=kwargs, core=_core(),
+        )
 
     def _run_with_observability(
         self,
@@ -354,28 +371,36 @@ class Agent(ABC):
                 kwargs['_run_deadline'] = time.monotonic() + run_timeout
             handlers = resolve_handlers(self._handlers, kwargs.get('handlers'))
             emit_stream_chunks = bool(kwargs.get('emit_stream_chunks'))
-            if handlers:
-                with run_context(
-                    agent_name=self.name,
-                    agent_class=type(self).__name__,
-                    handlers=handlers,
-                    trace_id=kwargs.get('trace_id'),
-                    emit_stream_chunks=emit_stream_chunks,
-                ) as ctx:
-                    async for rsp in self._arun_with_observability(
-                        new_messages=new_messages,
-                        return_message_type=return_message_type,
-                        lang=kwargs.get('lang', 'en'),
-                        run_kwargs=kwargs,
-                        ctx=ctx,
+
+            async def _acore():
+                if handlers:
+                    with run_context(
+                        agent_name=self.name,
+                        agent_class=type(self).__name__,
+                        handlers=handlers,
+                        trace_id=kwargs.get('trace_id'),
+                        emit_stream_chunks=emit_stream_chunks,
+                    ) as ctx:
+                        async for rsp in self._arun_with_observability(
+                            new_messages=new_messages,
+                            return_message_type=return_message_type,
+                            lang=kwargs.get('lang', 'en'),
+                            run_kwargs=kwargs,
+                            ctx=ctx,
+                        ):
+                            yield rsp
+                else:
+                    async for rsp in self._ayield_run_responses(
+                        self._arun(messages=new_messages, **kwargs),
+                        return_message_type,
                     ):
                         yield rsp
-            else:
-                async for rsp in self._ayield_run_responses(
-                    self._arun(messages=new_messages, **kwargs),
-                    return_message_type,
-                ):
-                    yield rsp
+
+            from cat_agent.trace.instrument import awrap_run_with_trace
+            async for rsp in awrap_run_with_trace(
+                self, new_messages=new_messages, kwargs=kwargs, core=_acore(),
+            ):
+                yield rsp
         finally:
             self._async_inflight -= 1
 
@@ -628,6 +653,8 @@ class Agent(ABC):
         from cat_agent.security.pii import maybe_redact_messages_for_prompt
 
         ctx = get_run_context()
+        from cat_agent.trace.instrument import apply_context_manager, record_llm_call
+        messages = apply_context_manager(self, messages)
         messages_for_llm = maybe_redact_messages_for_prompt(messages)
         audit_meta = self._audit_context()
         extra_cfg = merge_generate_cfgs(
@@ -667,6 +694,13 @@ class Agent(ABC):
                     yield output
             if ctx is not None:
                 self._accumulate_llm_metrics(ctx, final_output, started_at, messages_for_llm)
+            record_llm_call(
+                self,
+                messages_for_llm=messages_for_llm,
+                final_output=final_output,
+                started_at=started_at,
+                extra_cfg=extra_cfg,
+            )
             if is_audit_enabled() and final_output:
                 append_audit_record(
                     'audit.model_output',
@@ -735,6 +769,13 @@ class Agent(ABC):
                 chunk_count=chunk_count,
                 output=format_llm_obs_output(final_output, ctx),
             ))
+            record_llm_call(
+                self,
+                messages_for_llm=messages_for_llm,
+                final_output=final_output,
+                started_at=started_at,
+                extra_cfg=extra_cfg,
+            )
             if is_audit_enabled() and final_output:
                 append_audit_record(
                     'audit.model_output',
@@ -753,6 +794,8 @@ class Agent(ABC):
         from cat_agent.security.pii import maybe_redact_messages_for_prompt
 
         ctx = get_run_context()
+        from cat_agent.trace.instrument import apply_context_manager, record_llm_call
+        messages = apply_context_manager(self, messages)
         messages_for_llm = maybe_redact_messages_for_prompt(messages)
         audit_meta = self._audit_context()
         extra_cfg = merge_generate_cfgs(
@@ -803,6 +846,13 @@ class Agent(ABC):
             final_output = await _invoke_limited()
             if ctx is not None:
                 self._accumulate_llm_metrics(ctx, final_output, started_at, messages_for_llm)
+            record_llm_call(
+                self,
+                messages_for_llm=messages_for_llm,
+                final_output=final_output,
+                started_at=started_at,
+                extra_cfg=extra_cfg,
+            )
             if is_audit_enabled() and final_output:
                 append_audit_record(
                     'audit.model_output',
@@ -849,6 +899,13 @@ class Agent(ABC):
                 chunk_count=1,
                 output=format_llm_obs_output(final_output, ctx),
             ))
+            record_llm_call(
+                self,
+                messages_for_llm=messages_for_llm,
+                final_output=final_output,
+                started_at=started_at,
+                extra_cfg=extra_cfg,
+            )
             if is_audit_enabled() and final_output:
                 append_audit_record(
                     'audit.model_output',
@@ -881,6 +938,8 @@ class Agent(ABC):
                 **audit_meta,
             )
 
+        from cat_agent.trace.instrument import record_tool_call as _trace_tool
+
         if ctx is None or not ctx.handlers:
             started_at = time.monotonic()
             try:
@@ -888,6 +947,10 @@ class Agent(ABC):
             except (ToolNotFoundError, ToolExecutionError) as ex:
                 if ctx is not None:
                     self._accumulate_tool_metrics(ctx, started_at)
+                _trace_tool(
+                    tool_name=tool_name, tool_args=tool_args,
+                    succeeded=False, error=str(ex.message or ex), started_at=started_at,
+                )
                 if is_audit_enabled():
                     append_audit_record(
                         'audit.tool_result',
@@ -901,6 +964,10 @@ class Agent(ABC):
                 return ex.message or str(ex)
             if ctx is not None:
                 self._accumulate_tool_metrics(ctx, started_at)
+            _trace_tool(
+                tool_name=tool_name, tool_args=tool_args,
+                result=tool_result, succeeded=True, started_at=started_at,
+            )
             if is_audit_enabled():
                 append_audit_record(
                     'audit.tool_result',
@@ -959,6 +1026,10 @@ class Agent(ABC):
                     attempts=attempts,
                     output=str(ex.message or ex),
                 ))
+                _trace_tool(
+                    tool_name=tool_name, tool_args=tool_args,
+                    succeeded=False, error=str(ex.message or ex), started_at=started_at,
+                )
                 if is_audit_enabled():
                     append_audit_record(
                         'audit.tool_result',
@@ -1001,6 +1072,10 @@ class Agent(ABC):
                 attempts=attempts,
                 output=truncate_result_preview(tool_result, ctx),
             ))
+            _trace_tool(
+                tool_name=tool_name, tool_args=tool_args,
+                result=tool_result, succeeded=True, started_at=started_at,
+            )
             if is_audit_enabled():
                 append_audit_record(
                     'audit.tool_result',
@@ -1196,6 +1271,8 @@ class Agent(ABC):
                 **audit_meta,
             )
 
+        from cat_agent.trace.instrument import record_tool_call as _trace_tool
+
         if ctx is None or not ctx.handlers:
             started_at = time.monotonic()
             try:
@@ -1203,6 +1280,10 @@ class Agent(ABC):
             except (ToolNotFoundError, ToolExecutionError) as ex:
                 if ctx is not None:
                     self._accumulate_tool_metrics(ctx, started_at)
+                _trace_tool(
+                    tool_name=tool_name, tool_args=tool_args,
+                    succeeded=False, error=str(ex.message or ex), started_at=started_at,
+                )
                 if is_audit_enabled():
                     append_audit_record(
                         'audit.tool_result',
@@ -1216,6 +1297,10 @@ class Agent(ABC):
                 return ex.message or str(ex)
             if ctx is not None:
                 self._accumulate_tool_metrics(ctx, started_at)
+            _trace_tool(
+                tool_name=tool_name, tool_args=tool_args,
+                result=tool_result, succeeded=True, started_at=started_at,
+            )
             if is_audit_enabled():
                 append_audit_record(
                     'audit.tool_result',
@@ -1274,6 +1359,10 @@ class Agent(ABC):
                     attempts=attempts,
                     output=str(ex.message or ex),
                 ))
+                _trace_tool(
+                    tool_name=tool_name, tool_args=tool_args,
+                    succeeded=False, error=str(ex.message or ex), started_at=started_at,
+                )
                 if is_audit_enabled():
                     append_audit_record(
                         'audit.tool_result',
@@ -1316,6 +1405,10 @@ class Agent(ABC):
                 attempts=attempts,
                 output=truncate_result_preview(tool_result, ctx),
             ))
+            _trace_tool(
+                tool_name=tool_name, tool_args=tool_args,
+                result=tool_result, succeeded=True, started_at=started_at,
+            )
             if is_audit_enabled():
                 append_audit_record(
                     'audit.tool_result',

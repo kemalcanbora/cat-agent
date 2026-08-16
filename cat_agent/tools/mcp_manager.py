@@ -82,8 +82,10 @@ class MCPManager:
                 if (isinstance(exception, RuntimeError) and
                         'Attempted to exit cancel scope in a different task' in str(exception)):
                     return  # Silently ignore this type of exception
-                if (isinstance(exception, BaseExceptionGroup) and  # noqa
-                        'Attempted to exit cancel scope in a different task' in str(exception)):  # noqa
+                # BaseExceptionGroup is 3.11+; keep 3.10 import-safe.
+                _ExcGroup = getattr(__import__('builtins'), 'BaseExceptionGroup', ())
+                if _ExcGroup and isinstance(exception, _ExcGroup) and (
+                        'Attempted to exit cancel scope in a different task' in str(exception)):
                     return  # Silently ignore this type of exception
 
             # Other exceptions are handled normally

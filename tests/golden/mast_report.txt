@@ -1,0 +1,16 @@
+MAST analysis for run golden-run
+Citation: Cemri, M. et al. (2025). Why Do Multi-Agent LLM Systems Fail? arXiv:2503.13657, NeurIPS 2025.
+
+2 mode(s) present: 1.3 (Step Repetition), 1.5 (Unaware of Termination Conditions)
+
+Category rollups (present modes):
+  1 System Design Issues: 2
+  2 Inter-Agent Misalignment: 0
+  3 Task Verification: 0
+
+Findings:
+  [YES] 1.3 Step Repetition (det, conf=1.00) steps=[0, 1] — Repeated tool/LLM steps at indices [0, 1]
+  [no] 1.4 Loss of Conversation History (det, conf=0.00) steps=[] — No structural loss-of-history signal
+  [YES] 1.5 Unaware of Termination Conditions (det, conf=1.00) steps=[0, 1] — Terminated for max_steps without a final answer
+
+Limitations: MAST was developed on multi-agent traces (Cemri et al., 2025). Deterministic detectors are our operationalisation of published definitions, not the paper's annotation method. Judge scores are noisy estimates.

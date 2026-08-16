@@ -195,6 +195,17 @@ class Router(Assistant, MultiAgentHub):
                         role=USER,
                         content=f'[Handoff briefing] {handoff.context}',
                     ))
+                try:
+                    from cat_agent.trace.recorder import get_trace_recorder
+                    rec = get_trace_recorder()
+                    if rec is not None:
+                        rec.record_handoff(
+                            from_agent=selected_agent_name,
+                            to_agent=handoff.to,
+                            reason=handoff.context,
+                        )
+                except Exception:
+                    pass
                 self.emit_event('agent_start', handoff.to, {'via': 'handoff'})
                 for result in owner.run(messages=handoff_msgs, lang=lang, **kwargs):
                     for i in range(len(result)):

@@ -166,6 +166,21 @@ def _fake_entrypoint_registry(*_a, **_k):
     return SimpleNamespace(names=lambda: ['calc'])
 
 
+def _deploy_cfg(tmp_path) -> str:
+    """Hermetic platform config so macOS deploy does not depend on sibling stack."""
+    cfg_path = tmp_path / 'platform.toml'
+    cfg_path.write_text(
+        '[platform]\n'
+        'registry = "local"\n'
+        'docker_network = "nomad_deploy_hashicorp"\n'
+        'consul_dns = "10.32.0.2"\n'
+        'llm_gateway = "http://llm-gateway.service.consul:4000/v1"\n'
+        'vault_addr = "http://127.0.0.1:8200"\n',
+        encoding='utf-8',
+    )
+    return str(cfg_path)
+
+
 def test_deploy_fails_when_model_missing(tmp_path, monkeypatch):
     (tmp_path / 'agent.yaml').write_text(
         'name: calc\nteam: demo\nruntime:\n  entrypoint: app:registry\n'
@@ -174,7 +189,7 @@ def test_deploy_fails_when_model_missing(tmp_path, monkeypatch):
     )
     (tmp_path / 'app.py').write_text('def registry():\n    pass\n', encoding='utf-8')
     args = SimpleNamespace(
-        config=None,
+        config=_deploy_cfg(tmp_path),
         nomad_addr=None,
         registry='local',
         dir=str(tmp_path),
@@ -211,7 +226,7 @@ def test_deploy_fails_closed_on_unreachable_gateway(tmp_path, monkeypatch):
     )
     (tmp_path / 'app.py').write_text('def registry():\n    pass\n', encoding='utf-8')
     args = SimpleNamespace(
-        config=None,
+        config=_deploy_cfg(tmp_path),
         nomad_addr=None,
         registry='local',
         dir=str(tmp_path),
@@ -245,7 +260,7 @@ def test_deploy_skip_alias_check_allows_offline(tmp_path, monkeypatch):
     )
     (tmp_path / 'app.py').write_text('def registry():\n    pass\n', encoding='utf-8')
     args = SimpleNamespace(
-        config=None,
+        config=_deploy_cfg(tmp_path),
         nomad_addr=None,
         registry='local',
         dir=str(tmp_path),

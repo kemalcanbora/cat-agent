@@ -15,7 +15,6 @@ default = ["extension-module"]
 extension-module = ["pyo3/extension-module"]
 
 [dependencies]
-base64 = "0.22"
 jieba-rs = "0.6.6"
 lopdf = "0.38.0"
 once_cell = "1.21"

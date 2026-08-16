@@ -26,6 +26,9 @@ Cat-Agent is a **Python framework** for building LLM agents that run fully on-pr
 - **Scheduling** — recurring collect-and-report jobs (email / webhook)
 - **Synthesis** — Markdown draft → interviewed spec → sandboxed `@tool`
 - **Security** — air-gap mode, encrypted storage, audit trail, PII redaction
+- **Tracing** — structured JSONL execution traces (schema v1.0, RunLimits, redaction, token/cost totals)
+- **Context** — conversation-window management (observation masking with residue, compaction, `fold()`)
+- **Failure analysis** — MAST taxonomy over traces (14 modes; Tier-1 detectors + optional LLM judge)
 
 The base install is lightweight (OpenAI-compatible client + native Rust RAG). Heavy backends (Transformers, LlamaCpp, MLX) are optional extras.
 
@@ -623,6 +626,10 @@ from cat_agent.observability import PrintHandler, CallbackHandler, MermaidExport
 bot = Assistant(llm=..., handlers=[PrintHandler()])
 ```
 
+For **structured run traces** (JSONL, token totals, RunLimits), **context-window
+management**, and **MAST failure analysis**, see
+[Features — tracing, context, failure analysis](#features--tracing-context-failure-analysis).
+
 | Event | When |
 | --- | --- |
 | `run.start` / `run.end` | Agent lifecycle |
@@ -1015,6 +1022,71 @@ See [`deploy/README.md`](deploy/README.md). Release SBOM: `./scripts/generate_sb
 
 ## Advanced topics
 
+### Features — tracing, context, failure analysis
+
+Three libraries that sit beside agents (not RAG). Full notes and academic citations:
+[`docs/tracing.md`](docs/tracing.md), [`docs/context.md`](docs/context.md),
+[`docs/failure-analysis.md`](docs/failure-analysis.md), [`docs/references.md`](docs/references.md).
+
+#### Structured execution traces (`cat_agent.trace`)
+
+Machine-readable run history for cost, debugging, and evaluation — separate from Loguru logging.
+
+- JSONL append-only store, **schema v1.0** (`Run` / `Step`)
+- Step kinds: `llm_call`, `tool_call`, `handoff`, `context_op`, `error`, …
+- **`RunLimits`** — stop cleanly on max steps / tokens / wall clock / tool calls
+- **Redaction** — API keys never land in persisted `llm_config`
+- **Token & cost totals** — `RunTotals` (backend usage when present, otherwise estimated)
+
+```bash
+export CAT_AGENT_TRACE=1
+export CAT_AGENT_TRACE_FILE=./traces.jsonl   # optional; else in-memory
+```
+
+Or `agent.run(..., trace=True, trace_store=JSONLTraceStore(...), run_limits=RunLimits(...))`.
+
+Example: [`examples/trace/`](examples/trace/).
+
+#### Context management (`cat_agent.context`)
+
+Manages the **growing conversation window** during a long run. Separate from
+`cat_agent.memory` (RAG over user files).
+
+| Strategy | Role |
+| --- | --- |
+| **Observation masking** (default) | Elide old tool bodies; keep a compact **residue** (ids, repeated status tokens, salient mid-lines) |
+| **Summary compaction** | Optional LLM summary of oldest blocks |
+| **`fold()`** | Explicit scratch sub-task → one result message |
+
+```python
+from cat_agent.context import ContextManager, ObservationMaskingStrategy
+
+bot = Assistant(llm={...}, context_manager=ContextManager(
+    strategies=[ObservationMaskingStrategy(keep_recent=3)],
+))
+# Disable: context_manager=False  or  CAT_AGENT_CONTEXT=0
+```
+
+Examples: [`examples/context/`](examples/context/), [`examples/long_horizon_agent/`](examples/long_horizon_agent/).
+
+#### MAST failure analysis (`cat_agent.analysis`)
+
+Classify failure modes on a recorded trace using the **MAST** taxonomy
+(Cemri et al., arXiv:2503.13657) — 14 modes across system design, inter-agent
+misalignment, and task verification.
+
+- **Tier-1** (no LLM): deterministic detectors for **1.3** step repetition,
+  **1.4** loss of history, **1.5** unaware of termination
+- **Tier-2** (opt-in): LLM-as-judge for the remaining modes — never sent without
+  an explicit `judge_llm=`
+
+```bash
+python -m cat_agent.analysis traces.jsonl
+python -m cat_agent.analysis traces.jsonl --judge   # needs a configured LLM
+```
+
+Examples: [`examples/analysis/`](examples/analysis/), [`examples/failure_analysis/`](examples/failure_analysis/).
+
 ### Logging
 
 Silent by default (library-friendly). Activate with:
@@ -1054,6 +1126,11 @@ Run from repo root after installing matching extras.
 
 | Path | Topic |
 | --- | --- |
+| [`trace/`](examples/trace/) | Structured JSONL traces (`RunTotals`, RunLimits) |
+| [`context/`](examples/context/) | Observation masking + fold + residue |
+| [`analysis/`](examples/analysis/) | MAST Tier-1 (+ optional Ollama judge) |
+| [`long_horizon_agent/`](examples/long_horizon_agent/) | Context masking quality A/B + traced prompt tokens |
+| [`failure_analysis/`](examples/failure_analysis/) | MAST Tier-1 analysis on a failing loop |
 | [`tool_decorator/`](examples/tool_decorator/) | `@tool` decorator + deploy yaml |
 | [`serve_fastapi/`](examples/serve_fastapi/) | HTTP serve + Nomad deploy |
 | [`multi_agent/`](examples/multi_agent/) | GroupChat, Router, 3-model team |
@@ -1102,12 +1179,15 @@ Run from repo root after installing matching extras.
 | `cat_agent.platform` | Nomad deploy, manifest, HCL render |
 | `cat_agent.security` | Offline guards, PII, encryption, audit |
 | `cat_agent.observability` | Event hooks (Mermaid, OTel, Langfuse) |
+| `cat_agent.trace` | Structured JSONL runs (`Run` / `Step`, RunLimits, redaction, totals) |
+| `cat_agent.context` | Conversation-window masking / compaction / fold (not RAG) |
+| `cat_agent.analysis` | MAST failure taxonomy over traces (Tier-1 + optional judge) |
 | `cat_agent._native` | Rust: BM25, HNSW, PDF, tokenizer |
 | `native/` | Rust source (maturin/PyO3) |
 | `examples/` | Runnable demos (see index above) |
 | `deploy/` | Air-gap Docker + k8s CronJob |
 | `benchmarks/` | RAG / vector / truncation micro-benchmarks |
-| `tests/` | 890+ pytest functions |
+| `tests/` | 1600+ pytest functions |
 
 ### Testing
 

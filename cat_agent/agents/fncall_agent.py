@@ -93,6 +93,9 @@ class FnCallAgent(Agent):
         num_llm_calls_available = MAX_LLM_CALL_PER_RUN
         response = []
         while True and num_llm_calls_available > 0:
+            from cat_agent.trace.instrument import check_run_limit_stop
+            if check_run_limit_stop():
+                break
             num_llm_calls_available -= 1
 
             extra_generate_cfg = {'lang': lang}
@@ -110,6 +113,8 @@ class FnCallAgent(Agent):
                 messages.extend(output)
                 used_any_tool = False
                 for _src, tc_id, tool_name, tool_args in self._iter_tool_call_jobs(output):
+                    if check_run_limit_stop():
+                        break
                     tool_result = self._call_tool(tool_name, tool_args, messages=messages, **kwargs)
                     fn_msg = Message(
                         role=FUNCTION,

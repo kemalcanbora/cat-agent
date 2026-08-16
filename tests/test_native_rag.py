@@ -73,21 +73,17 @@ def test_rust_tokenizer_filters_stop_words():
 
 
 def test_rust_qwen_token_count_matches_python_baseline():
-    from pathlib import Path
+    from cat_agent.utils.tokenization_qwen import ensure_qwen_tokenizer, tokenizer
 
-    from cat_agent.utils.tokenization_qwen import tokenizer
-
-    vocab = str(Path(__file__).resolve().parents[1] / "cat_agent/utils/qwen.tiktoken")
-    native.init_qwen_tokenizer(vocab)
+    ensure_qwen_tokenizer()
     sample = "Token accounting should stay consistent across Rust and Python."
     assert native.count_qwen_tokens(sample) == len(tokenizer.encode(sample))
 
 
 def test_rust_qwen_encode_decode_roundtrip():
-    from pathlib import Path
+    from cat_agent.utils.tokenization_qwen import ensure_qwen_tokenizer
 
-    vocab = str(Path(__file__).resolve().parents[1] / "cat_agent/utils/qwen.tiktoken")
-    native.init_qwen_tokenizer(vocab)
+    ensure_qwen_tokenizer()
     sample = "Chunking and truncation share the same native tokenizer."
     token_ids = native.encode_qwen_tokens(sample)
     restored = native.decode_qwen_tokens(token_ids)
@@ -95,12 +91,9 @@ def test_rust_qwen_encode_decode_roundtrip():
 
 
 def test_rust_doc_chunker_splits_pages(tmp_path):
-    from pathlib import Path
+    from cat_agent.utils.tokenization_qwen import count_tokens, ensure_qwen_tokenizer
 
-    from cat_agent.utils.tokenization_qwen import count_tokens
-
-    vocab = str(Path(__file__).resolve().parents[1] / "cat_agent/utils/qwen.tiktoken")
-    native.init_qwen_tokenizer(vocab)
+    ensure_qwen_tokenizer()
     text_a = "First page paragraph."
     text_b = "Second page paragraph."
     doc = [

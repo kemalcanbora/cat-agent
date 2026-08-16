@@ -52,6 +52,11 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in {'1', 'true', 'yes', 'on'}
 
 
+# Structured execution traces (off by default — library-friendly)
+TRACE_ENABLED: bool = _env_bool('CAT_AGENT_TRACE', False)
+TRACE_FILE: str = os.getenv('CAT_AGENT_TRACE_FILE', '')
+TRACE_PRICE_TABLE: str = os.getenv('CAT_AGENT_TRACE_PRICE_TABLE', '')
+
 # Tool synthesis mutation gate (example-set quality check after holdout)
 MUTATION_ENABLED: bool = _env_bool('CAT_AGENT_MUTATION_ENABLED', True)
 MUTATION_LIMIT: int = int(os.getenv('CAT_AGENT_MUTATION_LIMIT', '12'))

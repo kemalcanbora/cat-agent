@@ -180,6 +180,23 @@ class GroupChat(Agent, MultiAgentHub):
             handoff = self.consume_pending_handoff()
             if handoff is not None:
                 if handoff.to in self.agent_names:
+                    try:
+                        from cat_agent.trace.recorder import get_trace_recorder
+                        rec = get_trace_recorder()
+                        if rec is not None:
+                            speaker = (
+                                (rsp[-1].name if rsp else None)
+                                or (mentioned_agents_name[0] if mentioned_agents_name else None)
+                                or self.name
+                                or 'group'
+                            )
+                            rec.record_handoff(
+                                from_agent=speaker,
+                                to_agent=handoff.to,
+                                reason=handoff.context,
+                            )
+                    except Exception:
+                        pass
                     mentioned_agents_name = [handoff.to] + [
                         n for n in mentioned_agents_name if n != handoff.to
                     ]

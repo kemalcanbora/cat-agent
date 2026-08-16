@@ -15,7 +15,7 @@ from __future__ import annotations
 import uuid
 from typing import Any, List, Literal, Optional, Tuple, Union
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 DEFAULT_SYSTEM_MESSAGE = ''
 
@@ -177,6 +177,10 @@ class Message(BaseModelCompatibleDict):
     tool_calls: Optional[List[ToolCall]] = None
     tool_call_id: Optional[str] = None
     extra: Optional[dict] = None
+    # Stable id for context eviction / trace correlation (in-process).
+    # Excluded from model_dump so existing dump↔Message round-trips stay
+    # byte-identical on public fields; callers that need the id read .id.
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), exclude=True)
 
     def __init__(self,
                  role: str,
@@ -187,6 +191,7 @@ class Message(BaseModelCompatibleDict):
                  tool_calls: Optional[List[Union[ToolCall, dict]]] = None,
                  tool_call_id: Optional[str] = None,
                  extra: Optional[dict] = None,
+                 id: Optional[str] = None,
                  **kwargs):
         if content is None:
             content = ''
@@ -197,20 +202,27 @@ class Message(BaseModelCompatibleDict):
             tool_calls = kwargs.pop('tool_calls')
         if tool_call_id is None and 'tool_call_id' in kwargs:
             tool_call_id = kwargs.pop('tool_call_id')
+        if id is None and 'id' in kwargs:
+            id = kwargs.pop('id')
 
         normalized = _normalize_tool_calls(
             tool_calls=tool_calls,
             function_call=function_call,
             extra=extra,
         )
-        super().__init__(role=role,
-                         content=content,
-                         reasoning_content=reasoning_content,
-                         name=name,
-                         tool_calls=normalized,
-                         tool_call_id=tool_call_id,
-                         extra=extra,
-                         **kwargs)
+        init_kwargs = dict(
+            role=role,
+            content=content,
+            reasoning_content=reasoning_content,
+            name=name,
+            tool_calls=normalized,
+            tool_call_id=tool_call_id,
+            extra=extra,
+            **kwargs,
+        )
+        if id is not None:
+            init_kwargs['id'] = id
+        super().__init__(**init_kwargs)
 
     def __repr__(self):
         return f'Message({self.model_dump()})'

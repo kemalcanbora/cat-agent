@@ -1,0 +1,69 @@
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Tests for cat_agent.security.tool_policy."""
+
+from cat_agent.security import tool_policy as tp
+
+
+def setup_function():
+    tp.TOOL_METADATA.clear()
+
+
+def test_record_and_lookup_metadata(monkeypatch):
+    monkeypatch.delenv('CAT_AGENT_OFFLINE', raising=False)
+    monkeypatch.delenv('CAT_AGENT_AIRGAP', raising=False)
+    tp.record_tool_metadata(
+        'web_search',
+        requires_network=True,
+        cloud_service=True,
+        register_by_default=False,
+    )
+    assert tp.tool_requires_network('web_search') is True
+    assert tp.tool_is_cloud_service('web_search') is True
+    # Offline mode off → always allowed
+    assert tp.is_tool_allowed_in_offline_mode('web_search') is True
+
+
+def test_offline_blocks_network_tools(monkeypatch):
+    monkeypatch.setenv('CAT_AGENT_OFFLINE', '1')
+    tp.record_tool_metadata(
+        'web_search',
+        requires_network=True,
+        cloud_service=True,
+        register_by_default=False,
+    )
+    tp.record_tool_metadata(
+        'code_interpreter',
+        requires_network=False,
+        cloud_service=False,
+        register_by_default=True,
+    )
+    assert tp.is_tool_allowed_in_offline_mode('web_search') is False
+    assert tp.is_tool_allowed_in_offline_mode('code_interpreter') is True
+
+
+def test_fallback_to_tool_class_attrs(monkeypatch):
+    monkeypatch.setenv('CAT_AGENT_OFFLINE', '1')
+
+    class NetTool:
+        requires_network = True
+        cloud_service = False
+
+    class LocalTool:
+        requires_network = False
+        cloud_service = False
+
+    assert tp.is_tool_allowed_in_offline_mode('unknown', NetTool) is False
+    assert tp.is_tool_allowed_in_offline_mode('unknown', LocalTool) is True
+    assert tp.tool_requires_network('unknown', NetTool) is True
+    assert tp.tool_is_cloud_service('unknown', NetTool) is False
