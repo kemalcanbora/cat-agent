@@ -69,6 +69,7 @@ def test_local_dockerfile_copies_cat_agent(tmp_path):
         assert 'COPY cat_agent' in text
         assert (ctx / 'cat_agent' / '__init__.py').is_file()
         assert 'PYTHONPATH=/opt/cat-agent' in text
+        assert 'pip install --no-cache-dir -r requirements.txt' in text
 
 
 def test_remote_dockerfile_has_no_cat_agent_copy(tmp_path):
@@ -93,6 +94,7 @@ def test_remote_dockerfile_has_no_cat_agent_copy(tmp_path):
         assert not (ctx / 'cat_agent').exists()
         assert 'FROM cat-agent-runtime:latest' in text
         assert 'COPY examples/calc /app' in text or 'COPY' in text
+        assert 'pip install --no-cache-dir -r requirements.txt' in text
 
 
 def test_remote_build_fails_loudly_when_base_lacks_framework(tmp_path):
@@ -278,4 +280,27 @@ def test_push_401_maps_to_actionable_message(monkeypatch):
     ):
         docker_login_and_push(
             cfg, 'demo/calc:test', run=run, login_run=login_run
+        )
+
+
+def test_standalone_dockerfile_installs_requirements_if_present():
+    """Agent dir outside a cat-agent checkout uses the COPY . /app Dockerfile."""
+    import os
+
+    cfg = PlatformConfig(registry='local', base_image='python:3.11-slim')
+    with tempfile.TemporaryDirectory() as src_raw, tempfile.TemporaryDirectory() as ctx_raw:
+        src = Path(src_raw)
+        (src / 'app.py').write_text('def registry():\n    pass\n', encoding='utf-8')
+        (src / 'requirements.txt').write_text('psycopg[binary]\n', encoding='utf-8')
+        prev = os.getcwd()
+        os.chdir(src)
+        try:
+            df = stage_agent_build_context(_manifest(), cfg, src, Path(ctx_raw))
+        finally:
+            os.chdir(prev)
+        text = df.read_text(encoding='utf-8')
+        assert 'COPY . /app' in text
+        assert (
+            'if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; fi'
+            in text
         )

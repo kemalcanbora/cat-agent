@@ -118,6 +118,7 @@ def _write_local_monorepo_dockerfile(
             ENV CAT_AGENT_ENTRYPOINT={entrypoint}
             ENV CAT_AGENT_MANAGED=1
             WORKDIR /app
+            RUN if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; fi
             """
         ),
         encoding='utf-8',
@@ -144,6 +145,7 @@ def _write_remote_dockerfile(
             FROM {base_image}
             WORKDIR /app
             COPY {rel_example} /app
+            RUN if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; fi
             ENV PYTHONPATH=/app
             ENV CAT_AGENT_ENTRYPOINT={entrypoint}
             ENV CAT_AGENT_MANAGED=1
@@ -311,6 +313,7 @@ def stage_agent_build_context(
             FROM {config.base_image}
             WORKDIR /app
             COPY . /app
+            RUN if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; fi
             ENV PYTHONPATH=/app
             ENV CAT_AGENT_ENTRYPOINT={manifest.runtime.entrypoint}
             ENV CAT_AGENT_MANAGED=1
