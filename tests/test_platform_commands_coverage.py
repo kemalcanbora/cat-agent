@@ -495,6 +495,7 @@ def test_cmd_deploy_remote_push_tag(tmp_path):
             patch.object(cmd, '_known_tools', return_value=set()), \
             patch.object(cmd, '_resolve_entrypoint_registry', return_value=registry), \
             patch.object(cmd, 'validate_manifest_registry_names'), \
+            patch.object(cmd, '_ensure_registry_vault'), \
             patch.object(cmd, 'manifest_sha', return_value='sha'), \
             patch('cat_agent.platform.builder.docker_login_and_push') as push, \
             patch.object(cmd, 'render_all', return_value=[('j', 'h')]), \

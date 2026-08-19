@@ -321,6 +321,10 @@ def test_cmd_stack_up_down_compose(tmp_path, monkeypatch):
     (tmp_path / 'docker-compose.yml').write_text('x\n', encoding='utf-8')
     monkeypatch.setattr(st, 'load_stack_env', lambda d: None)
     monkeypatch.setattr(st, 'run_compose', MagicMock(return_value=0))
+    monkeypatch.setattr(st, '_vault_llm_secret_missing', lambda cfg: False)
+    monkeypatch.setattr(
+        st, '_load_stack_operator_config', lambda args, sd: _cfg(),
+    )
     args = SimpleNamespace(
         dir=str(tmp_path),
         profile=None,
