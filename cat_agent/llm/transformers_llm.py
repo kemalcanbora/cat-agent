@@ -11,14 +11,200 @@
 # limitations under the License.
 
 import copy
+import json
+import re
 from threading import Thread
-from typing import Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Literal, Optional, Union
 
 from cat_agent.llm.base import register_llm
 from cat_agent.llm.function_calling import BaseFnCallModel
-from cat_agent.llm.schema import ASSISTANT, Message
+from cat_agent.llm.schema import (
+    ASSISTANT, FUNCTION, Message, FunctionCall, ToolCall, generate_tool_call_id,
+)
 from cat_agent.llm.schema import IMAGE, AUDIO, VIDEO
 from cat_agent.log import logger
+
+
+# ---------------------------------------------------------------------------
+# Native HF tool-call parsing
+# ---------------------------------------------------------------------------
+
+# FunctionGemma 270m: <start_function_call>call:name{...}<end_function_call>
+# Some models emit "call name" (space) instead of "call:name" (colon).
+_RE_FUNCTIONGEMMA = re.compile(
+    r'<start_function_call>\s*call[:\s]+(\w+)\s*\{(.*?)\}\s*<end_function_call>',
+    re.DOTALL,
+)
+# Gemma 4: <|tool_call>call:name{...}<tool_call|>
+_RE_GEMMA4 = re.compile(
+    r'<\|tool_call>call[:\s]+(\w+)\s*\{(.*?)\}<tool_call\|>',
+    re.DOTALL,
+)
+
+
+def _parse_gemma_kv_args(raw: str) -> Dict[str, Any]:
+    """Parse Gemma's custom key:value argument format into a Python dict.
+
+    Handles bare values, <escape>-delimited strings (FunctionGemma 270m),
+    <|"|>-delimited strings (Gemma 4), arrays, and nested objects.
+    """
+    raw = raw.strip()
+    if not raw:
+        return {}
+    # Try standard JSON first (some models may emit JSON)
+    try:
+        parsed = json.loads('{' + raw + '}')
+        if isinstance(parsed, dict):
+            return parsed
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # Replace Gemma escape markers with JSON quotes
+    cleaned = raw.replace('<escape>', '"').replace('<|"|>', '"')
+    try:
+        parsed = json.loads('{' + cleaned + '}')
+        if isinstance(parsed, dict):
+            return parsed
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # Manual key:value parsing as last resort
+    result: Dict[str, Any] = {}
+    for match in re.finditer(r'(\w+)\s*:\s*', cleaned):
+        key = match.group(1)
+        rest = cleaned[match.end():]
+        val, _ = _parse_value(rest)
+        result[key] = val
+    return result
+
+
+def _parse_value(s: str) -> tuple:
+    """Parse a single value from the start of *s*, return (value, remaining)."""
+    s = s.lstrip()
+    if not s:
+        return '', s
+    if s[0] == '"':
+        end = s.index('"', 1)
+        return s[1:end], s[end + 1:]
+    if s[0] == '[':
+        depth, i = 1, 1
+        while i < len(s) and depth > 0:
+            if s[i] == '[':
+                depth += 1
+            elif s[i] == ']':
+                depth -= 1
+            i += 1
+        try:
+            return json.loads(s[:i]), s[i:]
+        except (json.JSONDecodeError, ValueError):
+            return s[1:i - 1], s[i:]
+    if s[0] == '{':
+        depth, i = 1, 1
+        while i < len(s) and depth > 0:
+            if s[i] == '{':
+                depth += 1
+            elif s[i] == '}':
+                depth -= 1
+            i += 1
+        try:
+            return json.loads(s[:i]), s[i:]
+        except (json.JSONDecodeError, ValueError):
+            return s[1:i - 1], s[i:]
+    # Bare value: read until comma or end
+    end = len(s)
+    for delim in (',', '}'):
+        pos = s.find(delim)
+        if pos != -1 and pos < end:
+            end = pos
+    token = s[:end].strip()
+    # Try numeric / bool coercion
+    if token.lower() == 'true':
+        return True, s[end:]
+    if token.lower() == 'false':
+        return False, s[end:]
+    try:
+        return int(token), s[end:]
+    except ValueError:
+        pass
+    try:
+        return float(token), s[end:]
+    except ValueError:
+        pass
+    return token, s[end:]
+
+
+def parse_native_tool_calls(text: str) -> List[Dict[str, Any]]:
+    """Extract tool calls from HF model output supporting FunctionGemma and Gemma 4."""
+    calls: List[Dict[str, Any]] = []
+    for pattern in (_RE_FUNCTIONGEMMA, _RE_GEMMA4):
+        for m in pattern.finditer(text):
+            name = m.group(1)
+            args = _parse_gemma_kv_args(m.group(2))
+            calls.append({'name': name, 'arguments': args})
+        if calls:
+            break
+    # Deduplicate: small models sometimes emit the same call multiple times
+    seen = set()
+    unique: List[Dict[str, Any]] = []
+    for c in calls:
+        key = (c['name'], json.dumps(c['arguments'], sort_keys=True))
+        if key not in seen:
+            seen.add(key)
+            unique.append(c)
+    return unique
+
+
+def _convert_messages_for_use_chat_template_tools(
+    messages: List[Message],
+) -> List[Dict[str, Any]]:
+    """Convert cat-agent internal messages to the HF chat template format.
+
+    Transforms Message(role=ASSISTANT, tool_calls=[...]) into
+    {"role": "assistant", "tool_calls": [{"type":"function","function":{...}}]}
+    and Message(role=FUNCTION, name=..., content=...) into
+    {"role": "tool", "content": [{"name": ..., "response": ...}]}.
+    """
+    converted: List[Dict[str, Any]] = []
+    for msg in messages:
+        if msg.tool_calls:
+            hf_calls = []
+            for tc in msg.tool_calls:
+                args = tc.function.arguments
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+                hf_calls.append({
+                    'type': 'function',
+                    'function': {'name': tc.function.name, 'arguments': args},
+                })
+            entry: Dict[str, Any] = {'role': 'assistant', 'tool_calls': hf_calls}
+            if msg.content:
+                entry['content'] = msg.content if isinstance(msg.content, str) else ''
+            converted.append(entry)
+        elif msg.role == FUNCTION:
+            content_text = ''
+            if isinstance(msg.content, str):
+                content_text = msg.content
+            elif isinstance(msg.content, list) and msg.content:
+                content_text = msg.content[0].text or ''
+            # The HF template (FunctionGemma) calls dictsort on the response,
+            # so it MUST be a dict — wrap plain strings.
+            try:
+                response_val = json.loads(content_text)
+            except (json.JSONDecodeError, ValueError, TypeError):
+                response_val = {'result': content_text}
+            if not isinstance(response_val, dict):
+                response_val = {'result': response_val}
+            converted.append({
+                'role': 'tool',
+                'content': [{'name': msg.name or '', 'response': response_val}],
+            })
+        else:
+            dumped = msg.model_dump()
+            converted.append({'role': dumped.get('role', 'user'), 'content': dumped.get('content', '')})
+    return converted
 
 
 def _format_transformers_import_error(err: BaseException) -> str:
@@ -51,11 +237,11 @@ class Transformers(BaseFnCallModel):
     """
 
     @property
-    def supports_native_tools(self) -> bool:
-        # Prompt-path via fncall_prompts. HF models with native tool templates
-        # (and vLLM --enable-auto-tool-choice) are a follow-up.
+    def supports_use_chat_template_tools(self) -> bool:
         return False
+
     def __init__(self, cfg: Optional[Dict] = None):
+        self._use_chat_template_tools = bool((cfg or {}).get('use_chat_template_tools', False))
         super().__init__(cfg)
 
         if 'model' not in cfg:
@@ -227,3 +413,135 @@ class Transformers(BaseFnCallModel):
         response = response[:, inputs['input_ids'].size(-1):]
         answer = self.tokenizer.batch_decode(response, skip_special_tokens=True)[0]
         return [Message(ASSISTANT, answer)]
+
+    # ------------------------------------------------------------------
+    # Native HF tool calling (use_chat_template_tools=True)
+    # ------------------------------------------------------------------
+
+    def _get_inputs_with_tools(
+        self,
+        messages: List[Message],
+        functions: List[Dict],
+    ) -> dict:
+        """Tokenize messages with tool schemas via the HF chat template."""
+        import torch
+
+        hf_messages = _convert_messages_for_use_chat_template_tools(messages)
+        tools = []
+        for fn in functions:
+            if fn.get('type') == 'function':
+                tools.append(fn)
+            else:
+                tools.append({'type': 'function', 'function': fn})
+
+        template_target = self.processor if self.support_multimodal_input else self.tokenizer
+        encodings = template_target.apply_chat_template(
+            hf_messages,
+            tools=tools,
+            add_generation_prompt=True,
+            tokenize=True,
+            return_dict=True,
+            return_tensors='pt',
+        )
+
+        if isinstance(encodings, dict):
+            inputs = dict(encodings)
+        elif hasattr(encodings, 'input_ids'):
+            inputs = {k: getattr(encodings, k) for k in ('input_ids', 'attention_mask')
+                      if hasattr(encodings, k)}
+        else:
+            inputs = dict(
+                input_ids=encodings,
+                attention_mask=torch.ones_like(encodings),
+            )
+        for k, v in inputs.items():
+            if torch.is_tensor(v):
+                inputs[k] = v.to(self.hf_model.device)
+        return inputs
+
+    def _chat_with_use_chat_template_tools(
+        self,
+        messages: List[Message],
+        functions: List[Dict],
+        stream: bool,
+        generate_cfg: dict,
+    ) -> Union[List[Message], Iterator[List[Message]]]:
+        """Native HF tool-calling path: pass tools to apply_chat_template."""
+        generate_cfg = copy.deepcopy(generate_cfg)
+        for k in ('function_choice', 'thought_in_content', 'seed', 'stop'):
+            if k in generate_cfg:
+                if k == 'seed':
+                    from transformers import set_seed
+                    set_seed(generate_cfg['seed'])
+                del generate_cfg[k]
+
+        inputs = self._get_inputs_with_tools(messages, functions)
+        prompt_len = inputs['input_ids'].shape[-1]
+
+        generate_cfg.update(inputs)
+        generate_cfg['max_new_tokens'] = generate_cfg.get('max_new_tokens', 2048)
+
+        response = self.hf_model.generate(**generate_cfg)
+        new_tokens = response[:, prompt_len:]
+
+        # Decode WITH special tokens to detect function call markers
+        raw_output = self.tokenizer.batch_decode(new_tokens, skip_special_tokens=False)[0]
+        clean_output = self.tokenizer.batch_decode(new_tokens, skip_special_tokens=True)[0]
+        logger.debug(f'Native tools raw output: {raw_output!r}')
+
+        calls = parse_native_tool_calls(raw_output)
+
+        # If there's already a tool result in the conversation, the model should
+        # produce a final answer — not call the same tool again. This prevents
+        # infinite loops where the model re-emits the tool call after seeing the result.
+        has_prior_tool_result = any(m.role == FUNCTION for m in messages)
+        if calls and has_prior_tool_result:
+            prior_tool_names = {m.name for m in messages if m.role == FUNCTION}
+            new_calls = [c for c in calls if c['name'] not in prior_tool_names]
+            if not new_calls:
+                logger.debug('Suppressing repeated tool call(s) after tool result; using text answer.')
+                calls = []
+
+        if calls and not has_prior_tool_result:
+            # First pass: return only the tool call, no content
+            call = calls[0]
+            tc_id = generate_tool_call_id()
+            result = [Message(
+                role=ASSISTANT, content='',
+                tool_calls=[ToolCall(
+                    id=tc_id,
+                    function=FunctionCall(
+                        name=call['name'],
+                        arguments=json.dumps(call['arguments']),
+                    ),
+                )],
+            )]
+        elif calls:
+            # Subsequent passes with new tools
+            tool_calls = []
+            for call in calls:
+                tc_id = generate_tool_call_id()
+                tool_calls.append(ToolCall(
+                    id=tc_id,
+                    function=FunctionCall(
+                        name=call['name'],
+                        arguments=json.dumps(call['arguments']),
+                    ),
+                ))
+            result = [Message(role=ASSISTANT, content='', tool_calls=tool_calls)]
+        else:
+            # Final answer: strip any function call markers from clean text
+            answer = clean_output.strip()
+            # Remove any residual function call text the model may have appended
+            for marker in ('<start_function_call>', '<end_function_call>',
+                           '<|tool_call>', '<tool_call|>'):
+                answer = answer.replace(marker, '')
+            # Take only text before any "call:" pattern (model hallucinating calls)
+            call_pos = re.search(r'\bcall[:\s]+\w+\s*\{', answer)
+            if call_pos:
+                answer = answer[:call_pos.start()].strip()
+            result = [Message(role=ASSISTANT, content=answer)]
+
+        if stream:
+            return iter([result])
+        return result

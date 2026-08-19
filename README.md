@@ -145,6 +145,9 @@ bot = Assistant(
 )
 ```
 
+For models with native HF tool-calling templates (e.g. FunctionGemma), add
+`'use_chat_template_tools': True` to the config — see [LLM backends](#llm-backends).
+
 Local-only — no `agent.yaml` / Nomad deploy (model weights live on your machine).
 
 #### Step 2.3 — LlamaCpp (GGUF)
@@ -644,10 +647,30 @@ Enable trace logging: `CAT_AGENT_TRACE=1`. Langfuse example: [`examples/langfuse
 | Backend | `model_type` | Extra | Tool calling |
 | --- | --- | --- | --- |
 | OpenAI-compatible | `oai` | base install | Native `tools` / `tool_calls` on the wire |
-| Transformers | `transformers` | `[transformers]` | Prompt path (Nous `<tool_call>` markup) |
+| Transformers | `transformers` | `[transformers]` | Prompt path (Nous `<tool_call>` markup) **or** native HF chat template (`use_chat_template_tools: true`) |
 | LlamaCpp | `llama_cpp` | `[llama]` | Prompt path |
 | LlamaCpp Vision | `llama_cpp_vision` | `[llama]` | Prompt path |
 | MLX-LM | `mlx_lm` | `[mlx]` | Prompt path |
+
+**Native HF chat template tools** — Models like Google FunctionGemma ship with a
+Jinja chat template that formats tool schemas and parses tool calls natively.
+Set `use_chat_template_tools: true` to use it instead of the prompt-based path:
+
+```python
+bot = Assistant(
+    llm={
+        'model': 'google/functiongemma-270m-it',
+        'model_type': 'transformers',
+        'use_chat_template_tools': True,
+        'device': 'cuda:0',  # or 'mps'
+        'generate_cfg': {'max_new_tokens': 128, 'do_sample': False},
+    },
+    function_list=['sum_numbers'],
+)
+```
+
+Any HF model whose tokenizer supports `apply_chat_template(..., tools=...)` can
+use this path — it is not FunctionGemma-specific.
 
 Serve local Qwen (or any tools-capable model) through Ollama / vLLM / llama.cpp **server** with `model_type: oai` to get the native path. Both paths keep every tool call the model emits in one turn — there is no single-call trim.
 

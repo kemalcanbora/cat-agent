@@ -48,6 +48,9 @@ class BaseFnCallModel(BaseChatModel, ABC):
         messages = super()._preprocess_messages(messages, lang=lang, generate_cfg=generate_cfg, functions=functions)
         if use_raw_api:
             return messages
+        # Skip NousFnCallPrompt preprocessing when using native HF tool templates
+        if getattr(self, '_use_chat_template_tools', False):
+            return messages
         if (not functions) or (generate_cfg.get('function_choice', 'auto') == 'none'):
             messages = self._remove_fncall_messages(messages, lang=lang)
         else:
@@ -66,7 +69,8 @@ class BaseFnCallModel(BaseChatModel, ABC):
         generate_cfg: dict,
     ) -> List[Message]:
         messages = super()._postprocess_messages(messages, fncall_mode=fncall_mode, generate_cfg=generate_cfg)
-        if fncall_mode:
+        # Skip NousFnCallPrompt postprocessing when native tools already parsed the calls
+        if fncall_mode and not getattr(self, '_use_chat_template_tools', False):
             messages = self.fncall_prompt.postprocess_fncall_messages(
                 messages=messages,
                 function_choice=generate_cfg.get('function_choice', 'auto'),
@@ -143,6 +147,11 @@ class BaseFnCallModel(BaseChatModel, ABC):
         generate_cfg: dict,
         lang: Literal['en', 'zh'],
     ) -> Union[List[Message], Iterator[List[Message]]]:
+        # Delegate to native HF tool-calling path when enabled
+        if getattr(self, '_use_chat_template_tools', False):
+            return self._chat_with_use_chat_template_tools(
+                messages, functions, stream=stream, generate_cfg=generate_cfg,
+            )
         if delta_stream:
             raise NotImplementedError('Please use stream=True with delta_stream=False, because delta_stream=True'
                                       ' is not implemented for function calling due to some technical reasons.')

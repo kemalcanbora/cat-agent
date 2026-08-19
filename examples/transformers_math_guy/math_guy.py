@@ -19,15 +19,14 @@ def sum_numbers(numbers: List[float]) -> str:
 
 def main():
     llm_cfg = {
-        'model': 'Qwen/Qwen3.5-0.8B',
+        'model': 'google/functiongemma-270m-it',
         'model_type': 'transformers',
+        'use_chat_template_tools': True,
         'device': 'cuda:0' if torch.cuda.is_available() else 'mps',
         'generate_cfg': {
             'max_input_tokens': 512,
             'max_new_tokens': 128,
-            'temperature': 0.3,
-            'top_p': 0.8,
-            'repetition_penalty': 1.2,
+            'do_sample': False,
         },
     }
 
@@ -49,7 +48,7 @@ def main():
 
     for response in bot.run(messages=messages):
         response_text = typewriter_print(response, response_text)
-    print(response_text)
+    print()  # final newline
 
 
 if __name__ == "__main__":
