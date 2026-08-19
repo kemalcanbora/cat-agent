@@ -236,6 +236,54 @@ def test_cmd_status_with_local_sha_warning(tmp_path):
         assert any('WARNING' in str(c) for c in out.call_args_list)
 
 
+def test_cmd_status_shows_endpoint_info():
+    client = MagicMock()
+    client.list_agents.return_value = [_job()]
+    client.allocations.return_value = [
+        {'ID': 'abcdef12xxxx', 'ClientStatus': 'running', 'DesiredStatus': 'run'},
+    ]
+    args = _args(name='demo/calc')
+    with patch.object(cmd, '_load_cfg', return_value=_cfg()), \
+            patch.object(cmd, '_client', return_value=client), \
+            patch.object(cmd, '_out') as out:
+        assert cmd.cmd_status(args) == 0
+        texts = [str(c) for c in out.call_args_list]
+        joined = '\n'.join(texts)
+        assert '/agents/calc/run' in joined
+        assert 'curl' in joined
+        assert 'Authorization' in joined
+        assert 'http://demo-calc.localhost' in joined
+
+
+def test_cmd_status_endpoint_info_dispatch_mode():
+    client = MagicMock()
+    client.list_agents.return_value = [_job(jobs_mode='dispatch')]
+    client.allocations.return_value = []
+    args = _args(name='demo/calc')
+    with patch.object(cmd, '_load_cfg', return_value=_cfg()), \
+            patch.object(cmd, '_client', return_value=client), \
+            patch.object(cmd, '_out') as out:
+        assert cmd.cmd_status(args) == 0
+        texts = [str(c) for c in out.call_args_list]
+        joined = '\n'.join(texts)
+        assert '/agents/calc/jobs' in joined
+        assert '202' in joined
+
+
+def test_cmd_status_no_endpoint_info_for_schedule():
+    client = MagicMock()
+    client.list_agents.return_value = [_job(trigger='schedule')]
+    client.allocations.return_value = []
+    args = _args(name='demo/calc')
+    with patch.object(cmd, '_load_cfg', return_value=_cfg()), \
+            patch.object(cmd, '_client', return_value=client), \
+            patch.object(cmd, '_out') as out:
+        assert cmd.cmd_status(args) == 0
+        texts = [str(c) for c in out.call_args_list]
+        joined = '\n'.join(texts)
+        assert 'curl' not in joined
+
+
 def test_cmd_logs_uses_latest_alloc_and_task_state():
     client = MagicMock()
     client.list_agents.return_value = [_job()]

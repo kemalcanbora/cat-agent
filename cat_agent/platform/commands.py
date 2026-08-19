@@ -382,7 +382,60 @@ def cmd_status(args: Any) -> int:
                         f'WARNING: local agent.yaml sha {local_sha} differs from '
                         f"deployed {meta.get('manifest_sha')}"
                     )
+
+        # Endpoint info for HTTP-triggered agents
+        trigger = meta.get('trigger')
+        if trigger == 'http':
+            agent_name = meta.get('agent') or ''
+            team = meta.get('team') or ''
+            _print_endpoint_info(cfg, team, agent_name, meta)
     return 0
+
+
+def _print_endpoint_info(
+    cfg: PlatformConfig, team: str, agent_name: str, meta: Dict[str, Any],
+) -> None:
+    """Print service URL, endpoints, headers, and a curl example."""
+    base_url = cfg.public_url(team, agent_name)
+    consul_service = f'agent-{team}-{agent_name}.service.consul'
+    if not base_url:
+        base_url = f'http://{consul_service}'
+
+    _out('')
+    _out(f'  url: {base_url}')
+    _out('  endpoints:')
+    _out('    GET  /health')
+    _out('    GET  /healthz')
+    _out('    GET  /readyz')
+    _out('    GET  /agents')
+    _out(f'    POST /agents/{agent_name}/run')
+
+    jobs_mode = meta.get('jobs_mode')
+    if jobs_mode == 'dispatch':
+        _out(f'    POST /agents/{agent_name}/jobs          (async, 202)')
+        _out(f'    GET  /agents/{agent_name}/jobs/{{job_id}}')
+        _out(f'    DELETE /agents/{agent_name}/jobs/{{job_id}}')
+    elif jobs_mode == 'inline':
+        _out(f'    POST /agents/{agent_name}/jobs          (inline async)')
+        _out(f'    GET  /agents/{agent_name}/jobs/{{job_id}}')
+        _out(f'    DELETE /agents/{agent_name}/jobs/{{job_id}}')
+
+    _out('')
+    _out('  headers:')
+    _out('    Content-Type: application/json')
+    _out('    Authorization: Bearer <CAT_AGENT_SERVE_TOKEN>')
+    _out('')
+    _out('  example:')
+    _out(f'    curl -X POST {base_url}/agents/{agent_name}/run \\')
+    _out('      -H "Content-Type: application/json" \\')
+    _out('      -H "Authorization: Bearer $CAT_AGENT_SERVE_TOKEN" \\')
+    _out("      -d '{\"messages\": [{\"role\": \"user\", \"content\": \"hello\"}]}'")
+    _out('')
+    _out(f'  stream example (SSE):')
+    _out(f'    curl -N -X POST {base_url}/agents/{agent_name}/run \\')
+    _out('      -H "Content-Type: application/json" \\')
+    _out('      -H "Authorization: Bearer $CAT_AGENT_SERVE_TOKEN" \\')
+    _out("      -d '{\"messages\": [{\"role\": \"user\", \"content\": \"hello\"}], \"stream\": true}'")
 
 
 def cmd_logs(args: Any) -> int:
