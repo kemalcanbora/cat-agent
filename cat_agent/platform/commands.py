@@ -127,6 +127,9 @@ def _require_mac_docker_network(cfg: PlatformConfig) -> None:
     """Fail closed on macOS when bridge CNI would be used (Docker Desktop netns)."""
     if sys.platform != 'darwin':
         return
+    if cfg.platform_host_is_remote():
+        _out('remote platform: docker_network not required on operator Mac')
+        return
     network = (cfg.docker_network or '').strip()
     if network:
         _out(f'docker_network: {network}')
@@ -153,12 +156,14 @@ def cmd_doctor(args: Any) -> int:
     _out(f'vault_addr: {cfg.vault_addr}')
     if cfg.docker_network:
         _out(f'docker_network: {cfg.docker_network}')
-    elif sys.platform == 'darwin':
+    elif sys.platform == 'darwin' and not cfg.platform_host_is_remote():
         _out(
             'docker_network: NOT SET — macOS deploy will fail (unknown FS magic / '
             'bridge CNI); set CAT_AGENT_CONFIG to cat-agent-stack/cat-agent.config.toml'
         )
         failed = True
+    elif cfg.platform_host_is_remote():
+        _out('platform: remote (operator checks use vault/nomad host, not local docker_network)')
     if cfg.consul_dns:
         _out(f'consul_dns: {cfg.consul_dns}')
     _out(f'ingress_host_template: {cfg.ingress_host_template}')
@@ -205,7 +210,7 @@ def cmd_doctor(args: Any) -> int:
 
     # Consul DNS must actually resolve the gateway hostname (stale IPs after
     # Docker network recreate are a common silent failure).
-    if cfg.docker_network and cfg.consul_dns:
+    if cfg.docker_network and cfg.consul_dns and not cfg.platform_host_is_remote():
         try:
             ip = resolve_gateway_via_consul_dns(
                 cfg.consul_dns,
@@ -216,12 +221,17 @@ def cmd_doctor(args: Any) -> int:
         except GatewayError as exc:
             _out(str(exc))
             failed = True
-    elif cfg.docker_network and not cfg.consul_dns:
+    elif cfg.docker_network and not cfg.consul_dns and not cfg.platform_host_is_remote():
         _out(
             'consul_dns: not set (docker_network allocs will not resolve '
             f'{GATEWAY_HOST})'
         )
         failed = True
+    elif cfg.consul_dns and cfg.platform_host_is_remote():
+        _out(
+            f'consul_dns: skipped on remote operator '
+            f'(allocs on stack host use {cfg.consul_dns})'
+        )
 
     # Gateway reachability + advertised aliases.
     try:
@@ -393,6 +403,48 @@ def cmd_logs(args: Any) -> int:
     return 0
 
 
+def _ensure_registry_vault(cfg: PlatformConfig) -> None:
+    """Seed Zot push/pull Vault secrets when missing (remote deploy from Mac)."""
+    if cfg.is_local_registry():
+        return
+    try:
+        vault_registry_creds_exist(cfg, 'pull')
+        vault_registry_creds_exist(cfg, 'push')
+        return
+    except RegistryError:
+        pass
+    from cat_agent.platform.stack import StackError, seed_registry_vault
+
+    _out('vault registry creds missing; seeding Zot push/pull secrets')
+    try:
+        seed_registry_vault(cfg)
+    except StackError as exc:
+        raise CommandError(
+            f'registry Vault secrets missing and auto-seed failed: {exc}. '
+            'Set VAULT_TOKEN=root on the stack host and run: cat-agent stack seed --registry'
+        ) from exc
+
+
+def _ensure_team_llm_key(cfg: PlatformConfig, team: str) -> None:
+    """Mint ``secret/.../llm/teams/{team}`` if missing (no stack checkout required)."""
+    try:
+        vault_team_key_exists(cfg, team)
+        return
+    except GatewayError:
+        pass
+    from cat_agent.platform.stack import StackError, operator_llm_gateway, seed_team_key
+
+    gateway = operator_llm_gateway(cfg)
+    _out(f'vault team key missing for {team!r}; minting via {gateway}')
+    try:
+        seed_team_key(cfg, team, gateway_url=gateway)
+    except StackError as exc:
+        raise CommandError(
+            f'team {team!r} has no Vault LLM key and auto-seed failed: {exc}. '
+            'Set VAULT_TOKEN=root; LiteLLM must be reachable on the stack host :4000.'
+        ) from exc
+
+
 def cmd_deploy(args: Any) -> int:
     cfg = _load_cfg(args)
     _require_mac_docker_network(cfg)
@@ -429,6 +481,10 @@ def cmd_deploy(args: Any) -> int:
             ) from exc
     except ManifestError as exc:
         raise CommandError(str(exc)) from exc
+
+    _ensure_team_llm_key(cfg, manifest.team)
+    if not no_push and not cfg.is_local_registry():
+        _ensure_registry_vault(cfg)
 
     # Fail closed: model.alias must exist on the live LLM backend (Ollama list).
     # Escape hatch: --skip-alias-check (offline / CI without gateway).

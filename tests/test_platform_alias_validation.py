@@ -47,6 +47,13 @@ def _cfg(**kwargs) -> PlatformConfig:
     return PlatformConfig(**base)
 
 
+@pytest.fixture(autouse=True)
+def _skip_team_key_seed(monkeypatch):
+    monkeypatch.setattr(
+        'cat_agent.platform.commands._ensure_team_llm_key', lambda *a, **k: None
+    )
+
+
 def test_parse_model_ids_openai_shape():
     assert parse_model_ids(
         {'data': [{'id': 'default'}, {'id': 'smart'}, {'id': 'fast'}]}

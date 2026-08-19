@@ -145,6 +145,17 @@ class PlatformConfig:
         tmpl = (self.ingress_host_template or '').strip() or '{team}-{name}.localhost'
         return tmpl.format(team=team, name=name, agent=name)
 
+    def platform_host_is_remote(self) -> bool:
+        """Nomad/Vault run on another host (operator laptop is not the stack)."""
+        from urllib.parse import urlparse
+
+        loopback = {'127.0.0.1', 'localhost', '::1'}
+        for raw in (self.nomad_addr, self.vault_addr):
+            host = (urlparse(raw or '').hostname or '').lower()
+            if host and host not in loopback:
+                return True
+        return False
+
 
 def _repo_root() -> Path:
     """``cat-agent`` package root (parent of ``cat_agent/``)."""

@@ -190,3 +190,10 @@ def test_remote_auth_on_all_trigger_templates():
             assert 'secrets/registry.env' in hcl
             assert 'force_pull =' not in hcl
             assert 'cat-agent-zot' not in hcl
+
+
+def test_registry_base_url_uses_http_for_lan():
+    from cat_agent.platform.registry_probe import registry_base_url
+
+    cfg = _cfg(registry='192.168.1.128:5001')
+    assert registry_base_url(cfg) == 'http://192.168.1.128:5001'

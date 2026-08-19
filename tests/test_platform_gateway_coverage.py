@@ -360,6 +360,29 @@ def test_fetch_gateway_aliases_reachable_consul_rewrite():
     assert '127.0.0.1' in fetch.call_args_list[1].args[0]
 
 
+def test_fetch_gateway_aliases_reachable_remote_operator(monkeypatch):
+    cfg = _cfg(vault_addr='http://192.168.1.128:8200')
+    assert cfg.platform_host_is_remote()
+    monkeypatch.delenv('CAT_AGENT_STACK_GATEWAY', raising=False)
+    with patch.object(gw, 'fetch_gateway_aliases', return_value=['default']) as fetch:
+        out = gw.fetch_gateway_aliases_reachable(cfg, api_key='k')
+    assert out == ['default']
+    assert fetch.call_args.args[0] == 'http://192.168.1.128:4000/v1'
+
+
+def test_resolve_gateway_via_consul_dns_skip_docker(monkeypatch):
+    monkeypatch.setattr(gw.shutil, 'which', lambda cmd: '/bin/docker' if cmd == 'docker' else None)
+    monkeypatch.setattr(gw, '_dns_query_a', lambda *a, **k: ['10.0.0.1'])
+    assert (
+        gw.resolve_gateway_via_consul_dns(
+            '10.32.0.2',
+            docker_network='net',
+            skip_docker_network=True,
+        )
+        == '10.0.0.1'
+    )
+
+
 def test_fetch_aliases_for_config_and_ensure_alias():
     cfg = _cfg()
     with patch.object(gw, 'master_key_from_vault', return_value='mk'):

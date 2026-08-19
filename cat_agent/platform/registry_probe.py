@@ -32,13 +32,22 @@ class RegistryError(Exception):
 def registry_base_url(config: PlatformConfig) -> str:
     """HTTP(S) base URL for the registry (OCI /v2/)."""
     host = registry_host(config)
-    # Local stacks use plain HTTP (insecure-registries / loopback). Non-loopback
-    # hosts default to HTTPS; TLS failures surface as a readable sentence.
-    if host.startswith('127.') or host.startswith('localhost') or host.startswith('['):
+    # Local/LAN stacks use plain HTTP (insecure-registries). Non-loopback
+    # public hosts default to HTTPS; TLS failures surface as a readable sentence.
+    if _registry_uses_http(host):
         scheme = 'http'
     else:
         scheme = 'https'
     return f'{scheme}://{host}'
+
+
+def _registry_uses_http(host: str) -> bool:
+    bare = host.lower().split(':')[0].strip('[]')
+    if bare in {'127.0.0.1', 'localhost', '::1'}:
+        return True
+    if bare.startswith('10.') or bare.startswith('192.168.') or bare.startswith('172.'):
+        return True
+    return False
 
 
 def probe_registry_reachability(config: PlatformConfig, *, timeout: float = 5.0) -> str:

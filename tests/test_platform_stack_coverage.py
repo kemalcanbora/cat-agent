@@ -356,6 +356,8 @@ def test_cmd_stack_bootstrap_sets_flags(tmp_path, monkeypatch):
 
 def test_cmd_stack_seed(tmp_path, monkeypatch):
     (tmp_path / 'docker-compose.yml').write_text('x\n', encoding='utf-8')
+    monkeypatch.delenv('SEED_TEAMS', raising=False)
+    monkeypatch.delenv('TEAM', raising=False)
     monkeypatch.setattr(st, 'load_stack_env', lambda d: None)
     monkeypatch.setattr(st, '_out', lambda *a, **k: None)
     monkeypatch.setattr(
@@ -378,3 +380,82 @@ def test_cmd_stack_seed(tmp_path, monkeypatch):
     )
     assert st.cmd_stack_seed(args) == 0
     st.seed_registry_vault.assert_called_once()
+    st.seed_team_key.assert_called_once()
+    assert st.seed_team_key.call_args.args[1] == 'demo'
+
+
+def test_operator_llm_gateway_prefers_env(monkeypatch):
+    monkeypatch.setenv('CAT_AGENT_STACK_GATEWAY', 'http://192.168.1.128:4000/')
+    assert st.operator_llm_gateway(_cfg()) == 'http://192.168.1.128:4000'
+
+
+def test_operator_llm_gateway_from_vault_host(monkeypatch):
+    monkeypatch.delenv('CAT_AGENT_STACK_GATEWAY', raising=False)
+    cfg = _cfg(vault_addr='http://192.168.1.128:8200')
+    assert st.operator_llm_gateway(cfg) == 'http://192.168.1.128:4000'
+
+
+def test_cmd_stack_seed_without_stack_checkout(monkeypatch):
+    monkeypatch.delenv('SEED_TEAMS', raising=False)
+    monkeypatch.delenv('TEAM', raising=False)
+    monkeypatch.setattr(st, 'try_resolve_stack_dir', lambda *a, **k: None)
+    monkeypatch.setattr(st, '_out', lambda *a, **k: None)
+    monkeypatch.setattr(
+        'cat_agent.platform.config.load_platform_config',
+        lambda **k: _cfg(vault_addr='http://192.168.1.128:8200'),
+    )
+    monkeypatch.setattr(st, 'seed_llm_vault', MagicMock())
+    monkeypatch.setattr(st, 'seed_team_key', MagicMock())
+    args = SimpleNamespace(
+        dir=None,
+        nomad_addr=None,
+        config='/tmp/agent.toml',
+        team='research',
+        max_tokens_per_day=None,
+        tpm_limit=None,
+        rpm_limit=None,
+        registry=False,
+        profile=[],
+    )
+    assert st.cmd_stack_seed(args) == 0
+    assert st.seed_team_key.call_args.kwargs['stack_dir'] is None
+    assert st.seed_team_key.call_args.args[1] == 'research'
+
+
+def test_seed_teams_from_args_merges_env(monkeypatch):
+    monkeypatch.setenv('SEED_TEAMS', 'demo,research')
+    args = SimpleNamespace(team='ops')
+    assert st._seed_teams_from_args(args) == ['ops', 'demo', 'research']
+
+
+def test_cmd_stack_up_auto_seeds_when_llm_missing(tmp_path, monkeypatch):
+    (tmp_path / 'docker-compose.yml').write_text('x\n', encoding='utf-8')
+    monkeypatch.setattr(st, 'run_compose', lambda *a, **k: 0)
+    monkeypatch.setattr(st, 'configure_linux_insecure_registry', lambda *a, **k: None)
+    monkeypatch.setattr(st, '_vault_llm_secret_missing', lambda cfg: True)
+    seed = MagicMock(return_value=0)
+    monkeypatch.setattr(st, 'cmd_stack_seed', seed)
+    monkeypatch.setattr(st, '_load_stack_operator_config', lambda *a, **k: _cfg())
+    args = SimpleNamespace(dir=str(tmp_path), profile=[], build=False, detach=False, compose_args=None)
+    assert st.cmd_stack_up(args) == 0
+    seed.assert_called_once()
+
+
+def test_configure_linux_insecure_registry_skips_non_linux(tmp_path, monkeypatch):
+    monkeypatch.setattr(st.sys, 'platform', 'darwin')
+    st.configure_linux_insecure_registry(tmp_path, ['registry'])
+
+
+def test_ensure_team_llm_key_mints_when_missing(monkeypatch):
+    from cat_agent.platform import commands as c
+    from cat_agent.platform.gateway import GatewayError
+
+    monkeypatch.setattr(c, 'vault_team_key_exists', MagicMock(side_effect=GatewayError('no')))
+    mint = MagicMock()
+    monkeypatch.setattr('cat_agent.platform.stack.seed_team_key', mint)
+    monkeypatch.setattr(c, '_out', lambda *a, **k: None)
+    monkeypatch.delenv('CAT_AGENT_STACK_GATEWAY', raising=False)
+    c._ensure_team_llm_key(_cfg(vault_addr='http://192.168.1.128:8200'), 'research')
+    assert mint.call_args.args[1] == 'research'
+    assert mint.call_args.kwargs['gateway_url'] == 'http://192.168.1.128:4000'
+

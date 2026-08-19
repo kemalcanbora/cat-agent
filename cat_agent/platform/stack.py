@@ -49,6 +49,24 @@ DEFAULT_HOST_GATEWAY = 'http://127.0.0.1:4000'
 DEFAULT_MASTER_KEY = 'sk-local-litellm-master'
 
 
+def operator_llm_gateway(cfg: PlatformConfig) -> str:
+    """LiteLLM URL the *operator laptop* can reach (not in-alloc Consul DNS).
+
+    Prefer ``CAT_AGENT_STACK_GATEWAY``. Else same host as Vault/Nomad on :4000
+    when that host is not loopback (remote Pi). Else localhost:4000.
+    """
+    env = (os.environ.get('CAT_AGENT_STACK_GATEWAY') or '').strip()
+    if env:
+        return env.rstrip('/')
+    from urllib.parse import urlparse
+
+    for raw in (cfg.vault_addr, cfg.nomad_addr):
+        host = urlparse(raw or '').hostname or ''
+        if host and host not in {'127.0.0.1', 'localhost', '::1'}:
+            return f'http://{host}:4000'
+    return DEFAULT_HOST_GATEWAY
+
+
 class StackError(Exception):
     """User-facing one-sentence stack failure."""
 
@@ -96,6 +114,14 @@ def resolve_stack_dir(explicit: Optional[str] = None) -> Path:
             'cat-agent-stack checkout (or pass --dir)'
         )
     return root
+
+
+def try_resolve_stack_dir(explicit: Optional[str] = None) -> Path | None:
+    """Like ``resolve_stack_dir`` but ``None`` when no compose checkout is present."""
+    try:
+        return resolve_stack_dir(explicit)
+    except StackError:
+        return None
 
 
 def load_stack_env(stack_dir: Path) -> Path | None:
@@ -440,6 +466,63 @@ def seed_registry_vault(cfg: PlatformConfig, *, env: Mapping[str, str] | None = 
     _out(f'==> seeded registry Vault secrets push={push_path} pull={pull_path}')
 
 
+def _load_stack_operator_config(args: Any, stack_dir: Path | None) -> PlatformConfig:
+    from cat_agent.platform.config import load_platform_config
+
+    overrides: Dict[str, Any] = {}
+    if getattr(args, 'nomad_addr', None):
+        overrides['nomad_addr'] = args.nomad_addr
+    cfg_path = getattr(args, 'config', None)
+    if not cfg_path and stack_dir is not None:
+        candidate = stack_dir / 'cat-agent.config.toml'
+        if candidate.is_file():
+            cfg_path = str(candidate)
+    return load_platform_config(path=cfg_path, overrides=overrides or None)
+
+
+def _vault_llm_secret_missing(cfg: PlatformConfig) -> bool:
+    try:
+        read_vault_kv_data(cfg.vault_addr, cfg.llm_credentials_path)
+        return False
+    except GatewayError:
+        return True
+
+
+def configure_linux_insecure_registry(
+    stack_dir: Path,
+    profiles: Sequence[str],
+    *,
+    extra_hosts: Sequence[str] | None = None,
+) -> None:
+    """On Linux stack hosts, merge Zot HTTP registry into Docker daemon.json."""
+    if sys.platform != 'linux':
+        return
+    if 'registry' not in profiles:
+        return
+    script = stack_dir / 'scripts' / 'configure-docker-insecure-registry.sh'
+    if not script.is_file():
+        _out(f'==> skip insecure-registries (no {script})')
+        return
+    hosts = [h.strip() for h in (extra_hosts or ()) if h.strip()]
+    cmd = ['sudo', str(script), *hosts] if hosts else ['sudo', str(script)]
+    _out('==> configuring Docker insecure-registries for Zot (sudo)')
+    try:
+        proc = subprocess.run(cmd, check=False, text=True, capture_output=True)
+    except OSError as exc:
+        _out(f'WARNING: insecure-registries script failed: {exc}')
+        return
+    if proc.stdout:
+        _out(proc.stdout.rstrip())
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or '').strip()[:240]
+        _out(
+            'WARNING: could not configure insecure-registries '
+            f'(exit {proc.returncode})'
+            + (f': {err}' if err else '')
+            + '; run manually: sudo scripts/configure-docker-insecure-registry.sh'
+        )
+
+
 def cmd_stack_up(args: Any) -> int:
     stack_dir = resolve_stack_dir(getattr(args, 'dir', None))
     load_stack_env(stack_dir)
@@ -451,7 +534,13 @@ def cmd_stack_up(args: Any) -> int:
         compose_args.append('-d')
     extra = list(getattr(args, 'compose_args', None) or [])
     run_compose(stack_dir, compose_args + extra, profiles=profiles)
+    if getattr(args, 'detach', False) and 'registry' in profiles:
+        configure_linux_insecure_registry(stack_dir, profiles)
     if getattr(args, 'seed', False):
+        return cmd_stack_seed(args)
+    cfg = _load_stack_operator_config(args, stack_dir)
+    if _vault_llm_secret_missing(cfg):
+        _out('==> Vault LLM secret missing after up; auto-seeding')
         return cmd_stack_seed(args)
     return 0
 
@@ -473,13 +562,33 @@ def cmd_stack_compose(args: Any) -> int:
     return run_compose(stack_dir, passthrough, profiles=profiles, check=False)
 
 
+def _seed_teams_from_args(args: Any) -> List[str]:
+    """``--team`` plus comma-separated ``SEED_TEAMS`` (stack .env), default demo."""
+    seen: List[str] = []
+    for raw in (
+        getattr(args, 'team', None),
+        os.environ.get('TEAM'),
+        os.environ.get('SEED_TEAMS'),
+    ):
+        if not raw:
+            continue
+        for part in str(raw).split(','):
+            name = part.strip()
+            if name and name not in seen:
+                seen.append(name)
+    return seen or ['demo']
+
+
 def cmd_stack_seed(args: Any) -> int:
-    stack_dir = resolve_stack_dir(getattr(args, 'dir', None))
-    env_path = load_stack_env(stack_dir)
-    if env_path:
-        _out(f'==> loaded {env_path}')
+    stack_dir = try_resolve_stack_dir(getattr(args, 'dir', None))
+    if stack_dir is not None:
+        env_path = load_stack_env(stack_dir)
+        if env_path:
+            _out(f'==> loaded {env_path}')
+        else:
+            _out(f'==> no {stack_dir / ".env"} (using process env / stub defaults)')
     else:
-        _out(f'==> no {stack_dir / ".env"} (using process env / stub defaults)')
+        _out('==> no local stack checkout; seeding remote Vault from operator config')
 
     from cat_agent.platform.config import load_platform_config
 
@@ -487,14 +596,13 @@ def cmd_stack_seed(args: Any) -> int:
     if getattr(args, 'nomad_addr', None):
         overrides['nomad_addr'] = args.nomad_addr
     cfg_path = getattr(args, 'config', None)
-    if not cfg_path:
+    if not cfg_path and stack_dir is not None:
         candidate = stack_dir / 'cat-agent.config.toml'
         if candidate.is_file():
             cfg_path = str(candidate)
     cfg = load_platform_config(path=cfg_path, overrides=overrides or None)
 
     seed_llm_vault(cfg)
-    team = getattr(args, 'team', None) or os.environ.get('TEAM') or 'demo'
     max_tokens = int(
         getattr(args, 'max_tokens_per_day', None)
         or os.environ.get('MAX_TOKENS_PER_DAY')
@@ -506,14 +614,17 @@ def cmd_stack_seed(args: Any) -> int:
     rpm = getattr(args, 'rpm_limit', None)
     if rpm is None and os.environ.get('RPM_LIMIT'):
         rpm = int(os.environ['RPM_LIMIT'])
-    seed_team_key(
-        cfg,
-        team,
-        max_tokens_per_day=max_tokens,
-        tpm_limit=tpm,
-        rpm_limit=rpm,
-        stack_dir=stack_dir,
-    )
+    gateway = operator_llm_gateway(cfg)
+    for team in _seed_teams_from_args(args):
+        seed_team_key(
+            cfg,
+            team,
+            gateway_url=gateway,
+            max_tokens_per_day=max_tokens,
+            tpm_limit=tpm,
+            rpm_limit=rpm,
+            stack_dir=stack_dir,
+        )
     if getattr(args, 'registry', False) or 'registry' in (
         getattr(args, 'profile', None) or []
     ):

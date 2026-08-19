@@ -438,6 +438,7 @@ def resolve_gateway_via_consul_dns(
     *,
     hostname: str = GATEWAY_HOST,
     docker_network: str = '',
+    skip_docker_network: bool = False,
     timeout: float = 10.0,
 ) -> str:
     """Resolve hostname using consul_dns; prefer docker network (matches allocs)."""
@@ -446,7 +447,7 @@ def resolve_gateway_via_consul_dns(
         raise GatewayError('consul_dns is not set in platform config')
 
     network = (docker_network or '').strip()
-    if network and shutil.which('docker'):
+    if network and not skip_docker_network and shutil.which('docker'):
         try:
             proc = subprocess.run(
                 [
@@ -513,6 +514,15 @@ def fetch_gateway_aliases_reachable(
     timeout: float = 15.0,
 ) -> List[str]:
     """Reach the gateway the way allocs do when possible; else host fallbacks."""
+    if cfg.platform_host_is_remote():
+        from cat_agent.platform.stack import operator_llm_gateway
+
+        gateway = operator_llm_gateway(cfg)
+        root = gateway.rstrip('/')
+        if not root.endswith('/v1'):
+            gateway = f'{root}/v1'
+        return fetch_gateway_aliases(gateway, api_key=api_key, timeout=timeout)
+
     gateway = cfg.llm_gateway
     network = (cfg.docker_network or '').strip()
     dns = (cfg.consul_dns or '').strip()

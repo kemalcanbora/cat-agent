@@ -44,6 +44,11 @@ def _cfg(**kwargs) -> PlatformConfig:
     return PlatformConfig(**base)
 
 
+@pytest.fixture(autouse=True)
+def _skip_team_key_seed(monkeypatch):
+    monkeypatch.setattr(cmd, '_ensure_team_llm_key', lambda *a, **k: None)
+
+
 def _args(**kwargs):
     base = dict(
         config=None,
@@ -138,6 +143,26 @@ def test_require_mac_docker_network():
         with patch.object(cmd, '_out') as out:
             cmd._require_mac_docker_network(cfg2)
             out.assert_called()
+        remote = _cfg(docker_network='', vault_addr='http://192.168.1.128:8200')
+        with patch.object(cmd, '_out') as out:
+            cmd._require_mac_docker_network(remote)
+            out.assert_called()
+
+
+def test_ensure_registry_vault_seeds_when_missing():
+    cfg = _cfg(registry='192.168.1.128:5001')
+    with patch.object(cmd, 'vault_registry_creds_exist', side_effect=RegistryError('no')), \
+            patch('cat_agent.platform.stack.seed_registry_vault') as seed, \
+            patch.object(cmd, '_out'):
+        cmd._ensure_registry_vault(cfg)
+        seed.assert_called_once()
+
+
+def test_ensure_registry_vault_skips_local():
+    cfg = _cfg(registry='local')
+    with patch.object(cmd, 'vault_registry_creds_exist') as exist:
+        cmd._ensure_registry_vault(cfg)
+        exist.assert_not_called()
 
 
 def test_load_cfg_with_env_and_overrides(tmp_path):

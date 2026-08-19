@@ -17,10 +17,17 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from cat_agent.platform import commands as platform_commands
 from cat_agent.platform.config import PlatformConfig
 from cat_agent.platform.manifest import validate_manifest
 from cat_agent.platform.render import render_all
+
+
+@pytest.fixture(autouse=True)
+def _skip_team_key_seed(monkeypatch):
+    monkeypatch.setattr(platform_commands, '_ensure_team_llm_key', lambda *a, **k: None)
 
 
 def test_local_registry_bare_tag():
