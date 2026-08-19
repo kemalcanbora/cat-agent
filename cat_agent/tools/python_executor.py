@@ -11,7 +11,10 @@ from typing import Any, Dict, List, Optional, Union
 
 import json5
 import regex
-from tqdm import tqdm
+try:
+    from tqdm import tqdm
+except ModuleNotFoundError:
+    tqdm = None
 
 from cat_agent.log import logger
 from cat_agent.tools.base import BaseTool
@@ -225,7 +228,7 @@ class PythonExecutor(BaseTool):
             future = pool.map(executor, batch_code, timeout=self.timeout_length)
             iterator = future.result()
 
-            if len(batch_code) > 100:
+            if len(batch_code) > 100 and tqdm is not None:
                 progress_bar = tqdm(total=len(batch_code), desc='Execute')
             else:
                 progress_bar = None
