@@ -383,8 +383,8 @@ def cmd_status(args: Any) -> int:
                         f"deployed {meta.get('manifest_sha')}"
                     )
 
-        # Endpoint info for HTTP-triggered agents
-        trigger = meta.get('trigger')
+        # Endpoint info for HTTP-triggered agents (default to http for older deploys)
+        trigger = meta.get('trigger', 'http')
         if trigger == 'http':
             agent_name = meta.get('agent') or ''
             team = meta.get('team') or ''
@@ -396,10 +396,14 @@ def _print_endpoint_info(
     cfg: PlatformConfig, team: str, agent_name: str, meta: Dict[str, Any],
 ) -> None:
     """Print service URL, endpoints, headers, and a curl example."""
+    from urllib.parse import urlparse
+
     base_url = cfg.public_url(team, agent_name)
-    consul_service = f'agent-{team}-{agent_name}.service.consul'
     if not base_url:
-        base_url = f'http://{consul_service}'
+        # Best-effort: derive from nomad_addr host with default serve port
+        parsed = urlparse(cfg.nomad_addr)
+        host = parsed.hostname or '127.0.0.1'
+        base_url = f'http://{host}:8088'
 
     _out('')
     _out(f'  url: {base_url}')
